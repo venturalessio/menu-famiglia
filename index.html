@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Menù di famiglia</title>
+  <meta name="theme-color" content="#2e7d52">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Menù">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="title">Menù di famiglia</h1>
+  </header>
+  <main id="app"><p class="muted center">Caricamento…</p></main>
+  <nav class="tabbar hidden" id="tabbar">
+    <button data-tab="oggi"><span>☀️</span>Oggi</button>
+    <button data-tab="settimana"><span>📅</span>Settimana</button>
+    <button data-tab="spesa"><span>🛒</span>Spesa</button>
+    <button data-tab="ricette"><span>⭐</span>Ricette</button>
+    <button data-tab="impostazioni"><span>⚙️</span>Famiglia</button>
+  </nav>
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-body" id="sheet-body"></div>
+  </div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
