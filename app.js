@@ -106,18 +106,70 @@ function settings() {
 const app = () => document.getElementById("app");
 
 // ---------- Sheet (pannello dal basso) ----------
+// Entra ed esce dal basso lungo la stessa strada; si chiude anche trascinando la maniglia.
+const sheetEl = document.getElementById("sheet");
+const sheetPanel = sheetEl.querySelector(".sheet-panel");
+let sheetHideTimer;
 function openSheet(html, bind) {
-  const sheet = document.getElementById("sheet");
+  clearTimeout(sheetHideTimer);
   document.getElementById("sheet-body").innerHTML = html;
-  sheet.classList.remove("hidden");
+  document.getElementById("sheet-body").scrollTop = 0;
+  if (sheetEl.classList.contains("hidden")) {
+    sheetEl.classList.remove("hidden");
+    sheetPanel.getBoundingClientRect(); // fa partire l'animazione da sotto lo schermo
+  }
+  sheetPanel.style.transform = "";
+  sheetEl.querySelector(".sheet-backdrop").style.opacity = "";
+  sheetEl.classList.add("open");
   bind?.(document.getElementById("sheet-body"));
 }
 function closeSheet() {
-  document.getElementById("sheet").classList.add("hidden");
+  if (!sheetEl.classList.contains("open")) return;
+  sheetEl.classList.remove("open", "dragging");
+  sheetPanel.style.transform = "";
+  sheetEl.querySelector(".sheet-backdrop").style.opacity = "";
+  clearTimeout(sheetHideTimer);
+  sheetHideTimer = setTimeout(() => sheetEl.classList.add("hidden"), 460);
 }
-document.getElementById("sheet").addEventListener("click", (e) => {
+sheetEl.addEventListener("click", (e) => {
   if (e.target.matches("[data-close]")) closeSheet();
 });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeSheet();
+});
+(function sheetDrag() {
+  const handle = sheetEl.querySelector(".sheet-handle");
+  const backdrop = sheetEl.querySelector(".sheet-backdrop");
+  let startY = 0, dy = 0, samples = [];
+  handle.addEventListener("pointerdown", (e) => {
+    if (!sheetEl.classList.contains("open")) return;
+    handle.setPointerCapture(e.pointerId);
+    startY = e.clientY; dy = 0; samples = [{ y: e.clientY, t: e.timeStamp }];
+    sheetEl.classList.add("dragging");
+  });
+  handle.addEventListener("pointermove", (e) => {
+    if (!sheetEl.classList.contains("dragging")) return;
+    const raw = e.clientY - startY;
+    // verso l'alto resiste (elastico), verso il basso segue il dito 1:1
+    dy = raw >= 0 ? raw : -((-raw * 0.55 * 60) / (60 + 0.55 * -raw));
+    sheetPanel.style.transform = `translateY(${dy}px)`;
+    backdrop.style.opacity = String(Math.max(0, 1 - Math.max(0, dy) / sheetPanel.offsetHeight));
+    samples.push({ y: e.clientY, t: e.timeStamp });
+    if (samples.length > 5) samples.shift();
+  });
+  const end = () => {
+    if (!sheetEl.classList.contains("dragging")) return;
+    const a = samples[0], b = samples[samples.length - 1];
+    const v = b && a && b.t > a.t ? ((b.y - a.y) / (b.t - a.t)) * 1000 : 0; // px/s
+    // proietta dove andrebbe con lo slancio, come fa iOS
+    const projected = dy + (v / 1000) * 0.998 / (1 - 0.998);
+    sheetEl.classList.remove("dragging");
+    if (projected > sheetPanel.offsetHeight * 0.4) closeSheet();
+    else { sheetPanel.style.transform = ""; backdrop.style.opacity = ""; }
+  };
+  handle.addEventListener("pointerup", end);
+  handle.addEventListener("pointercancel", end);
+})();
 
 // ---------- Avvio ----------
 document.getElementById("tabbar").addEventListener("click", (e) => {
@@ -285,7 +337,10 @@ function renderError(err) {
 function render() {
   if (!S.household) return;
   document.getElementById("tabbar").classList.remove("hidden");
-  document.querySelectorAll("#tabbar button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
+  document.querySelectorAll("#tabbar button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.tab === S.tab);
+    if (b.dataset.tab === S.tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
   const titles = { oggi: "Oggi", settimana: "Settimana", spesa: "Spesa", ricette: "Ricette", impostazioni: "Famiglia" };
   document.getElementById("title").textContent = titles[S.tab];
   if (S.busy) return renderBusy();
