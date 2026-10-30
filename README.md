@@ -20,3 +20,9 @@ Web-app per iPhone che pianifica colazioni, pranzi e cene della settimana e prep
 2. **Indirizzo dell'app per le mail di conferma:** in Supabase: *Authentication → URL Configuration* → *Site URL* = indirizzo GitHub Pages dell'app.
 3. **Su iPhone:** apri l'indirizzo in Safari → Condividi → *Aggiungi alla schermata Home*.
 4. Il primo che entra tocca *Crea la famiglia*; l'altra persona si registra e usa il codice mostrato in *Famiglia*.
+
+## Mark (cartella `mark/`)
+Web-app per iPhone che fa da faccia al sistema di agenti "Mark": mostra Bacheca, Diario e pagine del quartier generale in Notion, e permette di parlare con Mark a voce o per iscritto.
+- Indirizzo: `https://venturalessio.github.io/menu-famiglia/mark/`
+- Funzione Supabase `mark` (`supabase/functions/mark`): legge Notion, risponde con Claude Sonnet 5.5 e scrive le richieste in Bacheca.
+- Secret in Supabase (*Edge Functions → Secrets*): `ANTHROPIC_API_KEY` (già presente), `NOTION_TOKEN` (integrazione interna Notion collegata alla pagina "Mark – quartier generale"), `MARK_ACCESS_KEY` (chiave personale chiesta dall'app al primo accesso).
