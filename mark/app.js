@@ -158,8 +158,12 @@ function ascolta(btn, input) {
   rec.start();
 }
 
-function parla(testo) {
-  if (!state.voce || !("speechSynthesis" in window)) return;
+function parla(testo, forza = false) {
+  if (!("speechSynthesis" in window)) {
+    if (forza) aggiungi("note", "Questo browser non ha la sintesi vocale.");
+    return;
+  }
+  if (!state.voce && !forza) return;
   speechSynthesis.cancel();
   speechSynthesis.resume();
   const u = new SpeechSynthesisUtterance(testo);
@@ -202,9 +206,10 @@ async function invia(testo) {
 function disegnaChat() {
   const box = $("#chat");
   if (!box) return;
-  const items = state.chat.map((m) => {
+  const items = state.chat.map((m, i) => {
     const cls = m.role === "user" ? "me" : m.role === "assistant" ? "mark" : "note";
-    return `<div class="bubble ${cls}">${esc(m.content)}</div>`;
+    const ascolta = cls === "mark" ? `<button class="ascolta" data-i="${i}" aria-label="Ascolta la risposta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>Ascolta</button>` : "";
+    return `<div class="bubble ${cls}">${esc(m.content)}${ascolta}</div>`;
   });
   if (state.sending) items.push(`<div class="bubble mark typing">Mark sta guardando in Notion…</div>`);
   box.innerHTML = items.length
@@ -213,6 +218,9 @@ function disegnaChat() {
        <ul><li>"Cosa ho in agenda oggi secondo il brief?"</li>
        <li>"Chi sono i clienti da lavorare questa settimana?"</li>
        <li>"Chiedi al Preparatore di preparare la riunione di domani con Rossi."</li></ul></div>`;
+  box.querySelectorAll(".ascolta").forEach((b) => {
+    b.onclick = () => parla(state.chat[Number(b.dataset.i)].content, true);
+  });
   requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
 }
 
@@ -410,14 +418,16 @@ document.addEventListener("visibilitychange", () => {
 
 if ("speechSynthesis" in window) speechSynthesis.getVoices();
 
-// Su iPhone la voce parte solo se è stata "sbloccata" da un tocco: lo facciamo al primo tocco sulla pagina
+// Su iPhone la voce parte solo se è stata "sbloccata" da un tocco vero (touchend o click, non pointerdown)
 function sbloccaVoce() {
   if (!("speechSynthesis" in window)) return;
   const u = new SpeechSynthesisUtterance(" ");
   u.volume = 0;
   u.lang = "it-IT";
   speechSynthesis.speak(u);
-  document.removeEventListener("pointerdown", sbloccaVoce, true);
+  document.removeEventListener("touchend", sbloccaVoce, true);
+  document.removeEventListener("click", sbloccaVoce, true);
 }
-document.addEventListener("pointerdown", sbloccaVoce, true);
+document.addEventListener("touchend", sbloccaVoce, true);
+document.addEventListener("click", sbloccaVoce, true);
 render();

@@ -180,3 +180,9 @@ h2.section { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04e
 @media (prefers-reduced-transparency: reduce) {
   .topbar, .tabbar, .composer { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+.ascolta {
+  display: flex; align-items: center; gap: 4px; margin-top: 6px;
+  border: 0; background: none; padding: 2px 0; color: var(--accent); font-size: 0.85rem; font-weight: 600;
+}
+.ascolta svg { width: 18px; height: 18px; }
+.ascolta:active { opacity: 0.6; }
