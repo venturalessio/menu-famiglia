@@ -161,6 +161,7 @@ function ascolta(btn, input) {
 function parla(testo) {
   if (!state.voce || !("speechSynthesis" in window)) return;
   speechSynthesis.cancel();
+  speechSynthesis.resume();
   const u = new SpeechSynthesisUtterance(testo);
   u.lang = "it-IT";
   const voce = speechSynthesis.getVoices().find((v) => v.lang?.startsWith("it"));
@@ -408,4 +409,15 @@ document.addEventListener("visibilitychange", () => {
 });
 
 if ("speechSynthesis" in window) speechSynthesis.getVoices();
+
+// Su iPhone la voce parte solo se è stata "sbloccata" da un tocco: lo facciamo al primo tocco sulla pagina
+function sbloccaVoce() {
+  if (!("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(" ");
+  u.volume = 0;
+  u.lang = "it-IT";
+  speechSynthesis.speak(u);
+  document.removeEventListener("pointerdown", sbloccaVoce, true);
+}
+document.addEventListener("pointerdown", sbloccaVoce, true);
 render();
