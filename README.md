@@ -26,3 +26,11 @@ Web-app per iPhone che fa da faccia al sistema di agenti "Mark": mostra Bacheca,
 - Indirizzo: `https://venturalessio.github.io/menu-famiglia/mark/`
 - Funzione Supabase `mark` (`supabase/functions/mark`): legge Notion, risponde con Claude Sonnet 5.5 e scrive le richieste in Bacheca.
 - Secret in Supabase (*Edge Functions → Secrets*): `ANTHROPIC_API_KEY` (già presente), `NOTION_TOKEN` (integrazione interna Notion collegata alla pagina "Mark – quartier generale"), `MARK_ACCESS_KEY` (chiave personale chiesta dall'app al primo accesso).
+
+### Casa (Shelly e Alexa)
+
+La chat di Mark comanda la casa se su Supabase ci sono i secret facoltativi:
+`SHELLY_AUTH_KEY` e `SHELLY_SERVER` (app Shelly → Impostazioni utente → Chiave cloud di autorizzazione)
+e `VOICEMONKEY_TOKEN` (console Voice Monkey → API Tokens). Shelly: luci, prese, relè e tapparelle.
+Alexa: routine create con Voice Monkey (per esempio Tado) e annunci sugli Echo.
+Serrature, allarmi e cancelli chiedono sempre conferma. L'azione `casa` verifica i collegamenti senza comandare nulla.
