@@ -41,3 +41,9 @@ Azione `siri` della funzione: riceve `{ action: "siri", testo }` e risponde `{ r
 La conversazione resta 15 minuti nella tabella `mark_siri` (solo service role, RLS senza policy).
 I comandi alla casa da Siri partono solo se l'ultimo messaggio è una conferma ("sì", "ok", "confermo"...).
 Il comando dell'app Comandi è descritto in `/mnt/project-files/mark/siri-comando.md` (cartella del progetto Claude).
+
+### Prezzi e Pensatore
+
+Per i prezzi Mark cerca online (Amazon.it più almeno un altro negozio) e, se Alessio vuole comprare, salva il link in Bacheca con `manda_link`. Mark non compra mai e non chiede dati di pagamento.
+Le domande difficili (account di Alessio, più fonti, ragionamenti in più passi) passano con `chiedi_al_pensatore` all'attività Claude Code "Mark – Pensatore" (`trig_01Qv9juK5uDx49VAPZofaiCr`), avviata dall'API delle routine. Il Pensatore usa i connettori del progetto, le skill e più agenti, poi risponde in Bacheca e nella pagina Notion "Risposte del Pensatore".
+Secret facoltativo: `PENSATORE_TOKEN`, il token API generato su claude.ai/code/routines nell'attività "Mark – Pensatore". Limiti: 30 avvii all'ora per l'attività.
