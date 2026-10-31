@@ -392,7 +392,12 @@ async function chiediAlPensatore(domanda: string, contesto: string, canale: stri
   const text = `Domanda di Alessio arrivata da Mark (${canale}), ${now}:\n${domanda}\n\nContesto della conversazione:\n${contesto || "nessuno"}`.slice(0, 60000);
   const res = await fetch(`https://api.anthropic.com/v1/claude_code/routines/${PENSATORE_ID}/fire`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "anthropic-beta": "experimental-cc-routine-2026-04-01",
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
     body: JSON.stringify({ text }),
   });
   if (res.ok) return "Domanda passata al Pensatore. La risposta arriva tra qualche minuto in Bacheca, con una notifica.";
@@ -403,6 +408,7 @@ async function chiediAlPensatore(domanda: string, contesto: string, canale: stri
     429: "troppe domande al Pensatore in quest'ora, riprova più tardi",
     400: "il Pensatore è in pausa",
   };
+  console.error("pensatore fire", res.status, (await res.text()).slice(0, 500));
   throw new CasaError(`Pensatore non avviato: ${motivi[res.status] ?? `errore ${res.status}`}.`);
 }
 
