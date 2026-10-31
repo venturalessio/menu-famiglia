@@ -2,7 +2,7 @@
 // risponde ad Alessio con Claude e scrive le sue richieste in Bacheca.
 // Secret richiesti: ANTHROPIC_API_KEY, NOTION_TOKEN, MARK_ACCESS_KEY.
 // Casa (facoltativi): SHELLY_AUTH_KEY, SHELLY_SERVER (Shelly Cloud), VOICEMONKEY_TOKEN (Alexa).
-// Pensatore (facoltativo): PENSATORE_TOKEN, il token dell'attività "Mark – Pensatore" creato su claude.ai/code/routines.
+// Pensatore (facoltativo): PENSATORE_ID e PENSATORE_TOKEN, ID e token API dell'attività "Mark – Pensatore" creata su claude.ai/code/routines.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk";
 
@@ -14,7 +14,6 @@ const ABOUT_PAGE = "409f1a1e9ab381809fd0c7358f6586ff";
 const BACHECA = "6acaa47c-5a1e-446f-95db-17e188243150";
 const DIARIO = "e95a2676-a3ec-4733-b2be-28e077cd639d";
 
-const PENSATORE_ID = "trig_01Qv9juK5uDx49VAPZofaiCr";
 
 const AGENTI = [
   "Capo-squadra",
@@ -387,10 +386,14 @@ async function alexaAnnuncio(id: string, testo: string) {
 
 async function chiediAlPensatore(domanda: string, contesto: string, canale: string) {
   const token = Deno.env.get("PENSATORE_TOKEN") ?? "";
-  if (!token) throw new CasaError("Il Pensatore non è ancora collegato: manca PENSATORE_TOKEN su Supabase.");
+  const id = (Deno.env.get("PENSATORE_ID") ?? "").trim();
+  if (!token || !/^trig_[A-Za-z0-9]+$/.test(id)) {
+    await domandaInBacheca(domanda, contesto, canale);
+    throw new CasaError("Il Pensatore non è collegato (mancano PENSATORE_ID o PENSATORE_TOKEN su Supabase). Ho salvato la domanda in Bacheca per lui.");
+  }
   const now = new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "full", timeStyle: "short" });
   const text = `Domanda di Alessio arrivata da Mark (${canale}), ${now}:\n${domanda}\n\nContesto della conversazione:\n${contesto || "nessuno"}`.slice(0, 60000);
-  const res = await fetch(`https://api.anthropic.com/v1/claude_code/routines/${PENSATORE_ID}/fire`, {
+  const res = await fetch(`https://api.anthropic.com/v1/claude_code/routines/${id}/fire`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -409,7 +412,24 @@ async function chiediAlPensatore(domanda: string, contesto: string, canale: stri
     400: "il Pensatore è in pausa",
   };
   console.error("pensatore fire", res.status, (await res.text()).slice(0, 500));
-  throw new CasaError(`Pensatore non avviato: ${motivi[res.status] ?? `errore ${res.status}`}.`);
+  await domandaInBacheca(domanda, contesto, canale);
+  throw new CasaError(`Pensatore non avviato: ${motivi[res.status] ?? `errore ${res.status}`}. Ho salvato la domanda in Bacheca per lui.`);
+}
+
+// Se il Pensatore non parte, la domanda resta in Bacheca e non si perde
+async function domandaInBacheca(domanda: string, contesto: string, canale: string) {
+  await notion("pages", "POST", {
+    parent: { type: "data_source_id", data_source_id: BACHECA },
+    properties: {
+      Messaggio: { title: [{ text: { content: domanda.slice(0, 200) } }] },
+      Da: { select: { name: "Alessio" } },
+      A: { select: { name: "Pensatore" } },
+      Tipo: { select: { name: "Richiesta" } },
+      Stato: { select: { name: "Aperto" } },
+      Dettagli: { rich_text: [{ text: { content: `${domanda}\n\nContesto: ${contesto || "nessuno"}\n(da Mark, ${canale})`.slice(0, 1900) } }] },
+    },
+  });
+  cachedContext = null;
 }
 
 async function mandaLink(l: { titolo: string; url: string; nota: string }) {
