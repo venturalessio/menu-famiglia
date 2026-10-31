@@ -34,3 +34,10 @@ La chat di Mark comanda la casa se su Supabase ci sono i secret facoltativi:
 e `VOICEMONKEY_TOKEN` (console Voice Monkey → API Tokens). Shelly: luci, prese, relè e tapparelle.
 Alexa: routine create con Voice Monkey (per esempio Tado) e annunci sugli Echo.
 Serrature, allarmi e cancelli chiedono sempre conferma. L'azione `casa` verifica i collegamenti senza comandare nulla.
+
+### Siri
+
+Azione `siri` della funzione: riceve `{ action: "siri", testo }` e risponde `{ risposta, continua }`.
+La conversazione resta 15 minuti nella tabella `mark_siri` (solo service role, RLS senza policy).
+I comandi alla casa da Siri partono solo se l'ultimo messaggio è una conferma ("sì", "ok", "confermo"...).
+Il comando dell'app Comandi è descritto in `/mnt/project-files/mark/siri-comando.md` (cartella del progetto Claude).
