@@ -186,3 +186,5 @@ h2.section { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04e
 }
 .ascolta svg { width: 18px; height: 18px; }
 .ascolta:active { opacity: 0.6; }
+.bubble a, .card a { color: inherit; text-decoration: underline; word-break: break-all; }
+.bubble.mark a, .card a { color: var(--accent); }

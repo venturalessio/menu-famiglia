@@ -43,6 +43,8 @@ function quando(iso) {
   return `${d.toLocaleDateString("it-IT", { weekday: "short", day: "numeric", month: "short" })} ${ora}`;
 }
 
+// Testo sicuro con i link https cliccabili
+const linkify = (s) => esc(s).replace(/https:\/\/[^\s<>"']+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u.length > 48 ? u.slice(0, 45) + "…" : u}</a>`);
 const esitoPill = (e) => `<span class="pill ${e === "Ok" ? "ok" : e === "Parziale" ? "warn" : e === "Errore" ? "err" : ""}">${esc(e || "—")}</span>`;
 
 async function api(body) {
@@ -210,16 +212,17 @@ function disegnaChat() {
   const items = state.chat.map((m, i) => {
     const cls = m.role === "user" ? "me" : m.role === "assistant" ? "mark" : "note";
     const ascolta = cls === "mark" ? `<button class="ascolta" data-i="${i}" aria-label="Ascolta la risposta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>Ascolta</button>` : "";
-    return `<div class="bubble ${cls}">${esc(m.content)}${ascolta}</div>`;
+    return `<div class="bubble ${cls}">${linkify(m.content)}${ascolta}</div>`;
   });
-  if (state.sending) items.push(`<div class="bubble mark typing">Mark sta guardando in Notion…</div>`);
+  if (state.sending) items.push(`<div class="bubble mark typing">Mark ci sta pensando…</div>`);
   box.innerHTML = items.length
     ? items.join("")
     : `<div class="hint"><p>Tocca il microfono e parla, oppure scrivi. Per esempio:</p>
        <ul><li>"Cosa ho in agenda oggi secondo il brief?"</li>
        <li>"Chi sono i clienti da lavorare questa settimana?"</li>
        <li>"Chiedi al Preparatore di preparare la riunione di domani con Rossi."</li>
-       <li>"Che dispositivi di casa vedi?"</li></ul></div>`;
+       <li>"Che dispositivi di casa vedi?"</li>
+       <li>"Quanto costa un robot aspirapolvere Roborock Q7?"</li></ul></div>`;
   box.querySelectorAll(".ascolta").forEach((b) => {
     b.onclick = () => parla(state.chat[Number(b.dataset.i)].content, true);
   });
@@ -305,7 +308,7 @@ function vistaOggi() {
   const ultimi = AGENTI.map((a) => d.diario.find((r) => r.agente === a)).filter(Boolean);
   app.innerHTML = `
     <h2 class="section">Per te</h2>
-    ${perMe.length ? perMe.map((m) => `<div class="card"><div class="meta"><span class="pill">${esc(m.da)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${esc(m.dettagli)}</p>` : ""}</div>`).join("") : `<div class="card muted">Nessun messaggio aperto per te.</div>`}
+    ${perMe.length ? perMe.map((m) => `<div class="card"><div class="meta"><span class="pill">${esc(m.da)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}</div>`).join("") : `<div class="card muted">Nessun messaggio aperto per te.</div>`}
     <h2 class="section">Ultimo giro di ogni agente</h2>
     ${ultimi.length ? ultimi.map((r) => `<div class="card"><div class="meta"><strong style="color:var(--text)">${esc(r.agente)}</strong>${esitoPill(r.esito)}${esc(quando(r.creato))}</div><p class="body">${esc(r.riepilogo)}</p>${r.problemi ? `<p class="body small muted">Problemi: ${esc(r.problemi)}</p>` : ""}</div>`).join("") : `<div class="card muted">Il Diario è ancora vuoto.</div>`}
     <h2 class="section">Pagine aggiornate di recente</h2>
@@ -319,7 +322,7 @@ function vistaBacheca() {
   app.innerHTML = `
     <button class="btn" id="nuova" style="width:100%;margin:8px 0 4px">Nuova richiesta a un agente</button>
     <h2 class="section">Messaggi</h2>
-    ${d.bacheca.map((m) => `<div class="card"><div class="meta"><span>${esc(m.da)} → ${esc(m.a)}</span><span class="pill ${m.stato === "Fatto" ? "ok" : "warn"}">${esc(m.stato)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${esc(m.dettagli)}</p>` : ""}</div>`).join("") || `<div class="card muted">La Bacheca è vuota.</div>`}`;
+    ${d.bacheca.map((m) => `<div class="card"><div class="meta"><span>${esc(m.da)} → ${esc(m.a)}</span><span class="pill ${m.stato === "Fatto" ? "ok" : "warn"}">${esc(m.stato)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}</div>`).join("") || `<div class="card muted">La Bacheca è vuota.</div>`}`;
   $("#nuova").onclick = nuovaRichiesta;
 }
 
