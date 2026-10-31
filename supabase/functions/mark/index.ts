@@ -493,8 +493,14 @@ ${texts.join("\n\n") || "Nessuna ancora."}`;
   return text;
 }
 
-async function eseguiStrumento(block: any, richieste: any[], azioni: string[]): Promise<string> {
+const COMANDI_CASA = ["casa_comanda", "alexa_routine", "alexa_annuncio"];
+const SI = /^\s*(s[iì]|ok|okay|conferm[a-z]*|vai|procedi|certo|esatto|fallo|d'accordo)(?![a-zà-ù])/i;
+
+async function eseguiStrumento(block: any, richieste: any[], azioni: string[], confermato = true): Promise<string> {
   const i = block.input ?? {};
+  if (COMANDI_CASA.includes(block.name) && !confermato) {
+    throw new CasaError("Serve la conferma di Alessio: chiedigli se confermi e aspetta il suo sì nel prossimo messaggio.");
+  }
   switch (block.name) {
     case "scrivi_in_bacheca":
       await scriviInBacheca(i);
@@ -524,15 +530,82 @@ async function eseguiStrumento(block: any, richieste: any[], azioni: string[]): 
   }
 }
 
-async function chat(messages: { role: string; content: string }[]) {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) return json({ error: "Manca la chiave Anthropic su Supabase." }, 500);
-  const history = messages
+const SIRI = `Ora Alessio ti parla da Siri sull'iPhone: sente solo la tua voce, non vede lo schermo.
+- Rispondi in una o due frasi brevi, senza elenchi, senza simboli, senza nomi di fonti lunghi.
+- Prima di ogni comando alla casa (casa_comanda, alexa_routine, alexa_annuncio) chiedi conferma con una domanda breve, per esempio "Accendo la luce del salotto, confermi?", e agisci solo se nel messaggio successivo dice sì. Leggere l'elenco o lo stato dei dispositivi non richiede conferma.
+- Se ti serve una risposta da lui, chiudi la frase con una domanda: Siri riaprirà il microfono.`;
+
+class ChatError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+function pulisci(messages: { role: string; content: string }[]) {
+  return messages
     .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string" && m.content.trim())
     .slice(-12);
-  if (!history.length || history[history.length - 1].role !== "user") {
-    return json({ error: "Messaggio vuoto" }, 400);
+}
+
+async function chat(messages: { role: string; content: string }[]) {
+  try {
+    return json(await rispondi(pulisci(messages)));
+  } catch (err) {
+    if (err instanceof ChatError) return json({ error: err.message }, err.status);
+    throw err;
   }
+}
+
+// Siri: la conversazione resta in memoria per 15 minuti nella tabella mark_siri
+async function db(path: string, method = "GET", body?: unknown) {
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const res = await fetch(`${url}/rest/v1/${path}`, {
+    method,
+    headers: { apikey: key!, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw new Error(`db ${res.status}`);
+  return method === "GET" ? await res.json() : null;
+}
+
+async function siri(testoRaw: unknown) {
+  const testo = String(testoRaw ?? "").trim().slice(0, 2000);
+  if (!testo) return json({ risposta: "Non ho sentito, riprova.", continua: false });
+  if (/^(nuova conversazione|ricominciamo|azzera)\b/i.test(testo)) {
+    await db("mark_siri?id=gt.0", "DELETE");
+    return json({ risposta: "Fatto, ricominciamo da capo.", continua: false });
+  }
+  const da = new Date(Date.now() - 15 * 60_000).toISOString();
+  const righe: any[] = await db(`mark_siri?select=role,content&created_at=gte.${encodeURIComponent(da)}&order=id.desc&limit=10`);
+  const storia = righe.reverse().map((r) => ({ role: r.role, content: r.content }));
+  // La conversazione deve iniziare con un messaggio di Alessio
+  while (storia.length && storia[0].role !== "user") storia.shift();
+  storia.push({ role: "user", content: testo });
+  let r: { risposta: string };
+  try {
+    r = await rispondi(pulisci(storia), { siri: true });
+  } catch (err) {
+    if (err instanceof ChatError) return json({ risposta: err.message, continua: false });
+    throw err;
+  }
+  await db("mark_siri", "POST", [
+    { role: "user", content: testo },
+    { role: "assistant", content: r.risposta },
+  ]);
+  // Pulizia dei messaggi vecchi
+  await db(`mark_siri?created_at=lt.${encodeURIComponent(new Date(Date.now() - 86_400_000).toISOString())}`, "DELETE");
+  return json({ ...r, continua: r.risposta.trim().endsWith("?") });
+}
+
+async function rispondi(history: { role: string; content: string }[], opzioni: { siri?: boolean } = {}) {
+  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new ChatError(500, "Manca la chiave Anthropic su Supabase.");
+  if (!history.length || history[history.length - 1].role !== "user") {
+    throw new ChatError(400, "Messaggio vuoto");
+  }
+  // Su Siri i comandi alla casa partono solo se l'ultimo messaggio è un sì
+  const confermato = !opzioni.siri || SI.test(history[history.length - 1].content);
 
   const now = new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "full", timeStyle: "short" });
   const context = await buildContext();
@@ -550,14 +623,14 @@ async function chat(messages: { role: string; content: string }[]) {
       fallbacks: "default",
       output_config: { effort: "low" },
       system: [
-        { type: "text", text: SYSTEM },
+        { type: "text", text: opzioni.siri ? `${SYSTEM}\n\n${SIRI}` : SYSTEM },
         { type: "text", text: `Adesso è ${now}.\n\n# Cosa c'è in Notion\n${context}` },
       ],
       tools: TOOLS,
       messages: convo,
     } as any);
 
-    if (response.stop_reason === "refusal") return json({ error: "Richiesta non accettata dal modello." }, 502);
+    if (response.stop_reason === "refusal") throw new ChatError(502, "Richiesta non accettata dal modello.");
     // Ricerca online lunga: si rimanda il turno così com'è e il server continua
     if (response.stop_reason === "pause_turn") {
       convo.push({ role: "assistant", content: response.content });
@@ -569,7 +642,7 @@ async function chat(messages: { role: string; content: string }[]) {
     const results: any[] = [];
     for (const block of response.content.filter((b: any) => b.type === "tool_use")) {
       try {
-        results.push({ type: "tool_result", tool_use_id: block.id, content: await eseguiStrumento(block, richieste, azioni) });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: await eseguiStrumento(block, richieste, azioni, confermato) });
       } catch (err) {
         if (err instanceof NotionError) throw err;
         const msg = err instanceof CasaError ? err.message : "Collegamento non riuscito, riprova tra poco.";
@@ -581,7 +654,7 @@ async function chat(messages: { role: string; content: string }[]) {
 
   const risposta = response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
   if (richieste.length) cachedContext = null;
-  return json({ risposta: risposta || "Non sono riuscito a rispondere, riprova.", richieste, azioni });
+  return { risposta: risposta || "Non sono riuscito a rispondere, riprova.", richieste, azioni };
 }
 
 // ---------- Server ----------
@@ -629,6 +702,18 @@ Deno.serve(async (req) => {
       }
       case "chat":
         return await chat(body.messages ?? []);
+      case "siri":
+        // Siri legge sempre "risposta": anche gli errori diventano una frase
+        try {
+          return await siri(body.testo);
+        } catch (err) {
+          const frase = err instanceof NotionError
+            ? "Non riesco a leggere Notion in questo momento."
+            : err instanceof Anthropic.RateLimitError
+            ? "Troppe richieste, riprova tra un minuto."
+            : "Ho avuto un problema, riprova tra poco.";
+          return json({ risposta: frase, continua: false });
+        }
       case "casa": {
         // Verifica dei collegamenti di casa, senza comandare nulla
         const prova = async (fn: () => Promise<any[]>) => {
