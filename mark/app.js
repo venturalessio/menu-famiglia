@@ -195,6 +195,7 @@ async function invia(testo) {
     state.sending = false;
     aggiungi("assistant", r.risposta);
     for (const q of r.richieste ?? []) aggiungi("note", `Richiesta passata a ${q.a}: ${q.messaggio}`);
+    for (const a of r.azioni ?? []) aggiungi("note", a);
     parla(r.risposta);
     if ((r.richieste ?? []).length) state.data = null;
   } catch (e) {
@@ -217,7 +218,8 @@ function disegnaChat() {
     : `<div class="hint"><p>Tocca il microfono e parla, oppure scrivi. Per esempio:</p>
        <ul><li>"Cosa ho in agenda oggi secondo il brief?"</li>
        <li>"Chi sono i clienti da lavorare questa settimana?"</li>
-       <li>"Chiedi al Preparatore di preparare la riunione di domani con Rossi."</li></ul></div>`;
+       <li>"Chiedi al Preparatore di preparare la riunione di domani con Rossi."</li>
+       <li>"Che dispositivi di casa vedi?"</li></ul></div>`;
   box.querySelectorAll(".ascolta").forEach((b) => {
     b.onclick = () => parla(state.chat[Number(b.dataset.i)].content, true);
   });
