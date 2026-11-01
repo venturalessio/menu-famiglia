@@ -982,7 +982,7 @@ const TOOLS: any[] = [
         testo: { type: "string", description: "Cosa ricordare, breve, con le parole di Alessio" },
         quando: { type: ["string", "null"], description: "Orario ISO 8601 con fuso, per esempio 2026-11-05T18:00:00+01:00; null per una cosa da fare senza orario" },
         avviso: { type: "string", enum: ["telefono", "alexa", "entrambi"] },
-        ripeti: { type: ["string", "null"], enum: ["giorno", "feriali", "settimana", "mese", null] },
+        ripeti: { type: "string", enum: ["mai", "giorno", "feriali", "settimana", "mese"], description: "mai se non si ripete" },
       },
       required: ["testo", "quando", "avviso", "ripeti"],
     },
