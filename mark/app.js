@@ -177,8 +177,8 @@ function parla(testo, forza = false) {
 
 // ---------- chat ----------
 
-function aggiungi(role, content) {
-  state.chat.push({ role, content, at: Date.now() });
+function aggiungi(role, content, extra = {}) {
+  state.chat.push({ role, content, at: Date.now(), ...extra });
   state.chat = state.chat.slice(-40);
   store.set("mark.chat", state.chat);
   if (state.tab === "parla") disegnaChat();
@@ -195,7 +195,7 @@ async function invia(testo) {
     const messages = state.chat.filter((m) => m.role === "user" || m.role === "assistant").map(({ role, content }) => ({ role, content }));
     const r = await api({ action: "chat", messages });
     state.sending = false;
-    aggiungi("assistant", r.risposta);
+    aggiungi("assistant", r.risposta, r.logId ? { logId: r.logId } : {});
     for (const q of r.richieste ?? []) aggiungi("note", `Richiesta passata a ${q.a}: ${q.messaggio}`);
     for (const a of r.azioni ?? []) aggiungi("note", a);
     parla(r.risposta);
@@ -212,7 +212,10 @@ function disegnaChat() {
   const items = state.chat.map((m, i) => {
     const cls = m.role === "user" ? "me" : m.role === "assistant" ? "mark" : "note";
     const ascolta = cls === "mark" ? `<button class="ascolta" data-i="${i}" aria-label="Ascolta la risposta"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>Ascolta</button>` : "";
-    return `<div class="bubble ${cls}">${linkify(m.content)}${ascolta}</div>`;
+    const voti = cls === "mark" && m.logId
+      ? `<span class="voti">${m.voto ? `<span class="small muted">${m.voto > 0 ? "👍 Grazie" : "👎 Segnato per l'Architetto"}</span>` : `<button class="voto" data-i="${i}" data-v="1" aria-label="Risposta utile">👍</button><button class="voto" data-i="${i}" data-v="-1" aria-label="Risposta sbagliata">👎</button>`}</span>`
+      : "";
+    return `<div class="bubble ${cls}">${linkify(m.content)}${ascolta}${voti}</div>`;
   });
   if (state.sending) items.push(`<div class="bubble mark typing">Mark ci sta pensando…</div>`);
   box.innerHTML = items.length
@@ -226,7 +229,26 @@ function disegnaChat() {
   box.querySelectorAll(".ascolta").forEach((b) => {
     b.onclick = () => parla(state.chat[Number(b.dataset.i)].content, true);
   });
+  box.querySelectorAll(".voto").forEach((b) => {
+    b.onclick = () => vota(Number(b.dataset.i), Number(b.dataset.v));
+  });
   requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
+}
+
+// 👍/👎: finisce nel diario di Mark, l'Architetto lo legge per migliorarlo
+async function vota(i, voto) {
+  const m = state.chat[i];
+  if (!m?.logId || m.voto) return;
+  let nota = "";
+  if (voto < 0) nota = (window.prompt("Cosa non andava? (facoltativo)") ?? "").trim();
+  try {
+    await api({ action: "voto", id: m.logId, voto, nota });
+    m.voto = voto;
+    store.set("mark.chat", state.chat);
+    disegnaChat();
+  } catch (e) {
+    aggiungi("note", `Voto non salvato: ${e.message}`);
+  }
 }
 
 // ---------- viste ----------
@@ -308,12 +330,26 @@ function vistaOggi() {
   const ultimi = AGENTI.map((a) => d.diario.find((r) => r.agente === a)).filter(Boolean);
   app.innerHTML = `
     <h2 class="section">Per te</h2>
-    ${perMe.length ? perMe.map((m) => `<div class="card"><div class="meta"><span class="pill">${esc(m.da)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}</div>`).join("") : `<div class="card muted">Nessun messaggio aperto per te.</div>`}
+    ${perMe.length ? perMe.map((m) => `<div class="card"><div class="meta"><span class="pill">${esc(m.da)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}<button class="btn secondary letto" data-id="${esc(m.id)}">Letto</button></div>`).join("") : `<div class="card muted">Nessun messaggio aperto per te.</div>`}
     <h2 class="section">Ultimo giro di ogni agente</h2>
     ${ultimi.length ? ultimi.map((r) => `<div class="card"><div class="meta"><strong style="color:var(--text)">${esc(r.agente)}</strong>${esitoPill(r.esito)}${esc(quando(r.creato))}</div><p class="body">${esc(r.riepilogo)}</p>${r.problemi ? `<p class="body small muted">Problemi: ${esc(r.problemi)}</p>` : ""}</div>`).join("") : `<div class="card muted">Il Diario è ancora vuoto.</div>`}
     <h2 class="section">Pagine aggiornate di recente</h2>
     ${d.pagine.slice(0, 3).map(pageCard).join("") || `<div class="card muted">Nessuna pagina.</div>`}`;
   collegaPagine();
+  app.querySelectorAll(".letto").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api({ action: "letto", id: b.dataset.id });
+        const m = state.data.bacheca.find((x) => x.id === b.dataset.id);
+        if (m) m.stato = "Letto";
+        vistaOggi();
+      } catch (e) {
+        b.disabled = false;
+        b.textContent = `Riprova (${e.message})`;
+      }
+    };
+  });
 }
 
 function vistaBacheca() {
@@ -322,7 +358,7 @@ function vistaBacheca() {
   app.innerHTML = `
     <button class="btn" id="nuova" style="width:100%;margin:8px 0 4px">Nuova richiesta a un agente</button>
     <h2 class="section">Messaggi</h2>
-    ${d.bacheca.map((m) => `<div class="card"><div class="meta"><span>${esc(m.da)} → ${esc(m.a)}</span><span class="pill ${m.stato === "Fatto" ? "ok" : "warn"}">${esc(m.stato)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}</div>`).join("") || `<div class="card muted">La Bacheca è vuota.</div>`}`;
+    ${d.bacheca.map((m) => `<div class="card"><div class="meta"><span>${esc(m.da)} → ${esc(m.a)}</span><span class="pill ${m.stato === "Fatto" || m.stato === "Letto" ? "ok" : "warn"}">${esc(m.stato)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}</div>`).join("") || `<div class="card muted">La Bacheca è vuota.</div>`}`;
   $("#nuova").onclick = nuovaRichiesta;
 }
 

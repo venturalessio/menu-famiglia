@@ -188,3 +188,7 @@ h2.section { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04e
 .ascolta:active { opacity: 0.6; }
 .bubble a, .card a { color: inherit; text-decoration: underline; word-break: break-all; }
 .bubble.mark a, .card a { color: var(--accent); }
+.voti { display: flex; gap: 12px; margin-top: 6px; align-items: center; }
+.voto { border: 0; background: none; font-size: 1.1rem; padding: 4px 6px; min-width: 44px; min-height: 36px; }
+.voto:active { transform: scale(0.92); }
+.card .letto { margin-top: 10px; width: 100%; }
