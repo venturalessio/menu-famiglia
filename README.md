@@ -47,3 +47,12 @@ Il comando dell'app Comandi è descritto in `/mnt/project-files/mark/siri-comand
 Per i prezzi Mark cerca online (Amazon.it più almeno un altro negozio) e, se Alessio vuole comprare, salva il link in Bacheca con `manda_link`. Mark non compra mai e non chiede dati di pagamento.
 Le domande difficili (account di Alessio, più fonti, ragionamenti in più passi) passano con `chiedi_al_pensatore` all'attività Claude Code "Mark – Pensatore", avviata dall'API delle attività programmate. L'attività va creata dal sito claude.ai/code/routines: quelle create da un progetto Claude rifiutano l'avvio via API (403 "this project is paused"). Se l'avvio non riesce, la domanda resta in Bacheca (A = Pensatore). Il Pensatore usa i connettori del progetto, le skill e più agenti, poi risponde in Bacheca e nella pagina Notion "Risposte del Pensatore".
 Secret facoltativi: `PENSATORE_ID` (l'ID `trig_...` dell'attività) e `PENSATORE_TOKEN` (il suo token API). Limiti: 30 avvii all'ora per l'attività.
+
+### Link, fonti e diario (1/11/2026)
+
+- Mark apre le pagine web con `web_fetch` (i link che Alessio gli dà, o la pagina giusta trovata con `web_search` su un sito).
+- Fonte principale: la pagina Notion "Stato di oggi", riscritta ogni giorno da Capo-squadra e Chiusura serale e aggiornata dal Pensatore. Vale più delle note vecchie in Bacheca.
+- Orari degli agenti: letti dal database Agenti (campo Quando), non più scritti nel codice.
+- Velocità: la parte fissa del prompt è in cache da Anthropic (`cache_control`); su Siri il contesto è corto (Stato di oggi, messaggi aperti, agenti).
+- Bacheca: stato `Letto`, pulsante "Letto" in Oggi (azione `letto`).
+- Diario delle conversazioni: tabella `mark_log` (solo service role, RLS senza policy) con domanda, risposta, strumenti, tempo, errori e voto 👍/👎 (azione `voto`). L'Architetto la legge ogni sera.
