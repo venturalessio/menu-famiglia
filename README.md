@@ -54,5 +54,6 @@ Secret facoltativi: `PENSATORE_ID` (l'ID `trig_...` dell'attività) e `PENSATORE
 - Fonte principale: la pagina Notion "Stato di oggi", riscritta ogni giorno da Capo-squadra e Chiusura serale e aggiornata dal Pensatore. Vale più delle note vecchie in Bacheca.
 - Orari degli agenti: letti dal database Agenti (campo Quando), non più scritti nel codice.
 - Velocità: la parte fissa del prompt è in cache da Anthropic (`cache_control`); su Siri il contesto è corto (Stato di oggi, messaggi aperti, agenti).
+- "Ricordati che…": strumento `ricorda`, salva i fatti detti da Alessio nello Stato di oggi o in Chi è Alessio.
 - Bacheca: stato `Letto`, pulsante "Letto" in Oggi (azione `letto`).
 - Diario delle conversazioni: tabella `mark_log` (solo service role, RLS senza policy) con domanda, risposta, strumenti, tempo, errori e voto 👍/👎 (azione `voto`). L'Architetto la legge ogni sera.
