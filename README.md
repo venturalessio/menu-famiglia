@@ -57,3 +57,11 @@ Secret facoltativi: `PENSATORE_ID` (l'ID `trig_...` dell'attività) e `PENSATORE
 - "Ricordati che…": strumento `ricorda`, salva i fatti detti da Alessio nello Stato di oggi o in Chi è Alessio.
 - Bacheca: stato `Letto`, pulsante "Letto" in Oggi (azione `letto`).
 - Diario delle conversazioni: tabella `mark_log` (solo service role, RLS senza policy) con domanda, risposta, strumenti, tempo, errori e voto 👍/👎 (azione `voto`). L'Architetto la legge ogni sera.
+
+### Promemoria, calendario e posta (1/11/2026)
+
+- **Promemoria e cose da fare**: "ricordami alle 18 di…" crea una riga in `mark_promemoria`. Il job `mark-promemoria` di pg_cron controlla ogni minuto e, solo se c'è qualcosa di scaduto, chiama la funzione con `action: "scadenze"`, che manda l'avviso sul telefono (Web Push), su Alexa (annuncio sul primo Echo di Voice Monkey) o su entrambi. Ripetizioni: giorno, feriali, settimana, mese. Nella web-app la lista è in Oggi, con il bottone Fatto.
+- **Notifiche sul telefono**: servono i secret `MARK_VAPID_PUBLIC` e `MARK_VAPID_PRIVATE`. Si generano nella web-app (Oggi → Genera le chiavi, nel browser) e si incollano su Supabase. Poi sull'iPhone, con Mark aperto dalla schermata Home: Oggi → Attiva notifiche. Le iscrizioni stanno in `mark_push`.
+- **Calendario**: lo strumento `calendario` legge in diretta i calendari iCloud. I link privati restano nella scheda Notion del Capo-squadra e la funzione li legge da lì.
+- **Posta**: `posta_cerca` e `posta_leggi` leggono Gmail in sola lettura via IMAP. Servono i secret `GMAIL_INDIRIZZO` e `GMAIL_PASSWORD_APP` (password per le app di Google).
+- **Controllo**: `action: "salute"` (senza chiave personale) dice solo se calendario, Gmail, notifiche e promemoria funzionano, senza mostrare dati.
