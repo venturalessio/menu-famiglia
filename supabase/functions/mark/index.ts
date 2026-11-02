@@ -1346,6 +1346,8 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
   const canale = opzioni.siri ? "Siri" : "web-app";
   const domanda = history[history.length - 1].content;
   const now = new Date().toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "full", timeStyle: "short" });
+  // Calcolata una volta sola: il system deve restare identico in tutti i giri, altrimenti il ragionamento salvato dal modello non vale più (errore 400)
+  const nowIso = isoRoma(new Date());
   const context = await buildContext(Boolean(opzioni.siri));
   const client = new Anthropic({ apiKey });
   const convo: any[] = history.map((m) => ({ role: m.role, content: m.content }));
@@ -1365,7 +1367,7 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
       // La parte fissa (strumenti + regole) resta in cache da Anthropic; data e Notion cambiano e vanno dopo
       system: [
         { type: "text", text: opzioni.siri ? `${SYSTEM}\n\n${SIRI}` : SYSTEM, cache_control: { type: "ephemeral" } },
-        { type: "text", text: `Adesso è ${now} (ISO ${isoRoma(new Date())}).\n\n# Cosa c'è in Notion\n${context}` },
+        { type: "text", text: `Adesso è ${now} (ISO ${nowIso}).\n\n# Cosa c'è in Notion\n${context}` },
       ],
       tools: TOOLS,
       messages: convo,
