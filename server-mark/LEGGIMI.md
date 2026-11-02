@@ -23,6 +23,7 @@ da `filo-whatsapp`.
 - Con novità, Claude Haiku decide cosa merita un avviso (persone, scuola, scadenze, eventi spostati;
   niente newsletter o pubblicità) e il bot lo manda con 🔔. Di notte le novità aspettano il mattino.
 - Stato in `public.mark_sentinella`; ogni giro con avvisi finisce in `mark_log` (canale `sentinella`).
+- Lavoro (Outlook, Teams, calendario di lavoro): un'attività programmata del progetto, "Mark · Sentinella lavoro (M365)", gira ogni ora dalle 8 alle 18, lunedì-giovedì. Mette gli avvisi, brevi e senza dati dei clienti, nella tabella `public.mark_avvisi_coda` con la funzione `public.mark_m365_avvisi`; la sentinella li inoltra al giro successivo.
 - `/avvisi_off` mette in pausa, `/avvisi_on` riattiva.
 
 ## Sicurezza del server
@@ -59,8 +60,7 @@ dello schermo nel thread.
 `mark_telegram.py` è il bot, `installa.sh` prepara il server. `cloud-config.yaml` contiene
 solo le chiavi e scarica `installa.sh` e il bot da GitHub a un commit fisso (un testo lungo si
 rovinava copiandolo dal telefono). Dopo una modifica, aggiornare il commit in `cloud-config.yaml`.
-Il registro dell'installazione è in `/var/log/mark-installa.log`. Per un server già acceso il file va copiato in `/opt/mark/` e il servizio
-riavviato (`systemctl restart mark-telegram`).
+Il registro dell'installazione è in `/var/log/mark-installa.log`. Per un server già acceso: dalla console di Hetzner `aggiorna-mark <versione>` (es. `aggiorna-mark mark-v3`); le versioni sono rami del repository.
 
 Costo: CX23 5,49 € + IVA al mese più l'IPv4 (prezzi dopo il 15 giugno 2026), più il
 consumo di Claude della funzione `mark`, come per la web-app.
