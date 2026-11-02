@@ -890,7 +890,8 @@ Prezzi e acquisti:
 Pensatore:
 - Per le domande difficili usa chiedi_al_pensatore: quando serve leggere i suoi account (Outlook, Teams, Gmail, calendari, Drive), mettere insieme molte fonti, fare confronti, piani o ragionamenti in più passi. Il Pensatore usa tutti i collegamenti, le skill e più agenti, ci mette qualche minuto e risponde in Bacheca con una notifica.
 - Domande semplici, prezzi e casa li gestisci tu. Nella domanda al Pensatore scrivi tutto quello che serve per capire la richiesta, anche dalla conversazione.
-- Dopo averlo chiamato, di' ad Alessio in una frase che ci sta pensando il Pensatore. Se in Bacheca c'è una risposta del Pensatore e Alessio la chiede, riassumila tu.
+- Dopo averlo chiamato, di' ad Alessio in una frase che ci sta pensando il Pensatore. Se in Bacheca c'è una risposta del Pensatore e Alessio la chiede (anche solo "leggimela" dopo l'avviso), riassumila tu dalla Bacheca.
+- Su Telegram, quando la risposta del Pensatore è pronta, Alessio riceve un avviso con il titolo.
 
 Casa:
 - Comandi i dispositivi Shelly (luci, prese, relè, tapparelle) con casa_dispositivi e casa_comanda, e Alexa con Voice Monkey (alexa_dispositivi, alexa_routine, alexa_annuncio). Il riscaldamento Tado e gli altri dispositivi di Alexa passano dalle routine di Alexa.
@@ -1498,6 +1499,32 @@ async function fotografiaGiorni(): Promise<string[]> {
   return [...new Set(righe)];
 }
 
+// Risposte del Pensatore arrivate in Bacheca dopo l'ultimo giro (lavori lunghi chiesti anche da Telegram).
+// Su Telegram va solo il titolo: il testo resta in Bacheca e Mark lo riassume se Alessio lo chiede.
+async function risposteNuove(): Promise<{ avvisi: string[]; stato: { ultimo: string; visti: string[] } }> {
+  const prima = await statoSentinella("pensatore");
+  const adesso = new Date().toISOString();
+  // Prima volta: si parte da adesso, senza avvisi sul passato
+  if (!prima?.ultimo) return { avvisi: [], stato: { ultimo: adesso, visti: [] } };
+  const visti = new Set<string>(prima.visti ?? []);
+  const data = await notion(`data_sources/${BACHECA}/query`, "POST", {
+    page_size: 10,
+    filter: {
+      and: [
+        { property: "Da", select: { equals: "Pensatore" } },
+        { timestamp: "created_time", created_time: { on_or_after: prima.ultimo } },
+      ],
+    },
+    sorts: [{ timestamp: "created_time", direction: "ascending" }],
+  });
+  const nuove = (data.results as any[]).filter((r) => !visti.has(r.id));
+  const avvisi = nuove.map((r) => `Il Pensatore ha risposto: ${prop(r, "Messaggio").slice(0, 200)}. Scrivimi "leggimela" e te la riassumo.`);
+  // Notion arrotonda l'ora di creazione al minuto: si tengono gli id già visti dell'ultimo minuto
+  const ultimo = nuove.length ? nuove[nuove.length - 1].created_time : prima.ultimo;
+  const tutti = [...(data.results as any[])].filter((r) => r.created_time >= ultimo).map((r) => r.id);
+  return { avvisi, stato: { ultimo, visti: tutti.slice(-20) } };
+}
+
 async function sentinella() {
   const oggi = isoRoma(new Date()).slice(0, 10);
   const novita: string[] = [];
@@ -1568,7 +1595,16 @@ Rispondi SOLO con un array JSON di stringhe, una per avviso, in italiano, brevi 
     problemi.push(`coda: ${String((err as any)?.message ?? err).slice(0, 80)}`);
   }
 
+  let pensatore: { avvisi: string[]; stato: { ultimo: string; visti: string[] } } | null = null;
+  try {
+    pensatore = await risposteNuove();
+    avvisi.push(...pensatore.avvisi);
+  } catch (err) {
+    problemi.push(`pensatore: ${String((err as any)?.message ?? err).slice(0, 80)}`);
+  }
+
   // Lo stato si aggiorna solo dopo che gli avvisi sono pronti
+  if (pensatore) await salvaSentinella("pensatore", pensatore.stato);
   if (gmail.ultimo !== null) await salvaSentinella("gmail", { ultimo: gmail.ultimo });
   if (foto) await salvaSentinella("giorni", { giorno: oggi, righe: foto });
   if (avvisi.length || problemi.length) {
