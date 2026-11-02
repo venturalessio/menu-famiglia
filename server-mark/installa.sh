@@ -69,5 +69,21 @@ ReadWritePaths=/var/lib/mark
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
-systemctl enable --now mark-telegram
+systemctl enable mark-telegram
+systemctl restart mark-telegram
+
+# Per aggiornare in futuro: aggiorna-mark <tag o commit>
+cat > /usr/local/bin/aggiorna-mark <<'FINE'
+#!/bin/bash
+set -euo pipefail
+V="${1:?scrivi la versione, es. mark-v3}"
+curl -fsSL "https://raw.githubusercontent.com/venturalessio/menu-famiglia/${V}/server-mark/installa.sh" -o /root/installa.sh
+if bash /root/installa.sh "$V" > /var/log/mark-installa.log 2>&1; then
+  echo "Mark aggiornato a $V"
+else
+  echo "Errore: vedi /var/log/mark-installa.log"
+  exit 1
+fi
+FINE
+chmod 0755 /usr/local/bin/aggiorna-mark
 echo "Mark su Telegram installato."

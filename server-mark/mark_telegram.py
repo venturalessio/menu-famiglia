@@ -61,8 +61,24 @@ class Telegram:
             with open(destinazione, "wb") as f:
                 f.write(r.read())
 
-    def scrivi(self, chat_id, testo):
-        for pezzo in dividi(testo):
+    def segnaposto(self, chat_id, testo="Ci sto pensando…"):
+        """Messaggio visibile mentre Mark lavora; sparisce quando arriva la risposta."""
+        try:
+            return self.chiama("sendMessage", {"chat_id": chat_id, "text": testo, "disable_notification": True}, timeout=15)["message_id"]
+        except Exception as e:
+            log("segnaposto", repr(e))
+            return None
+
+    def scrivi(self, chat_id, testo, al_posto_di=None):
+        # Il segnaposto si cancella e la risposta arriva come messaggio nuovo,
+        # così la notifica sul telefono mostra la risposta vera.
+        if al_posto_di:
+            try:
+                self.chiama("deleteMessage", {"chat_id": chat_id, "message_id": al_posto_di}, timeout=15)
+            except Exception as e:
+                log("segnaposto", repr(e))
+        pezzi = dividi(testo)
+        for pezzo in pezzi:
             self.chiama("sendMessage", {
                 "chat_id": chat_id,
                 "text": pezzo,
@@ -227,6 +243,7 @@ def gestisci(tg, chiave, codice, memoria, msg):
 
     voce = msg.get("voice") or msg.get("audio")
     if voce and not testo:
+        ascolto = tg.segnaposto(chat_id, "Sto ascoltando la nota vocale…")
         with StaScrivendo(tg, chat_id), tempfile.TemporaryDirectory() as cartella:
             percorso = os.path.join(cartella, "nota.ogg")
             try:
@@ -234,22 +251,23 @@ def gestisci(tg, chiave, codice, memoria, msg):
                 testo = trascrivi(percorso)
             except Exception as e:
                 log("trascrizione", repr(e))
-                tg.scrivi(chat_id, "Non sono riuscito a trascrivere la nota vocale, riprova o scrivimi.")
+                tg.scrivi(chat_id, "Non sono riuscito a trascrivere la nota vocale, riprova o scrivimi.", al_posto_di=ascolto)
                 return
         if not testo:
-            tg.scrivi(chat_id, "Non ho sentito niente nella nota vocale, riprova.")
+            tg.scrivi(chat_id, "Non ho sentito niente nella nota vocale, riprova.", al_posto_di=ascolto)
             return
-        tg.scrivi(chat_id, f"Ho capito: «{testo}»")
+        tg.scrivi(chat_id, f"Ho capito: «{testo}»", al_posto_di=ascolto)
 
     if not testo:
         tg.scrivi(chat_id, "Per ora leggo testo e note vocali.")
         return
 
     memoria.aggiungi("user", testo)
+    attesa = tg.segnaposto(chat_id)
     with StaScrivendo(tg, chat_id):
         risposta = chiedi_a_mark(chiave, memoria.storia())
     memoria.aggiungi("assistant", risposta)
-    tg.scrivi(chat_id, in_chiaro(risposta))
+    tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
 
 
 def main():
