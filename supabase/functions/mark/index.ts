@@ -1557,6 +1557,17 @@ Rispondi SOLO con un array JSON di stringhe, una per avviso, in italiano, brevi 
     }
   }
 
+  // Avvisi già decisi da altri agenti (Sentinella lavoro su M365): passano così come sono
+  try {
+    const coda: any[] = await db("mark_avvisi_coda?select=id,testo&inviato=is.null&order=id.asc&limit=10");
+    if (coda.length) {
+      avvisi.push(...coda.map((r) => String(r.testo)));
+      await db(`mark_avvisi_coda?id=in.(${coda.map((r) => Number(r.id)).join(",")})`, "PATCH", { inviato: new Date().toISOString() });
+    }
+  } catch (err) {
+    problemi.push(`coda: ${String((err as any)?.message ?? err).slice(0, 80)}`);
+  }
+
   // Lo stato si aggiorna solo dopo che gli avvisi sono pronti
   if (gmail.ultimo !== null) await salvaSentinella("gmail", { ultimo: gmail.ultimo });
   if (foto) await salvaSentinella("giorni", { giorno: oggi, righe: foto });
