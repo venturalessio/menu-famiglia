@@ -9,8 +9,16 @@ Web-app per iPhone che pianifica colazioni, pranzi e cene della settimana e prep
 - **Spesa:** lista generata dal menù, raggruppata per reparto, senza i prodotti della dispensa base; si spunta in tempo reale da due telefoni.
 - **Imprevisti:** "Stasera pizza o asporto" sposta le cene in avanti di un giorno; "Bimba a casa" aggiunge un pranzo di riserva fatto con ingredienti a lunga conservazione.
 
+## Il nutrizionista (novembre 2026)
+- **Regole CREA 2018 nel codice** (`nutrition.js`): frequenze settimanali di pesce, legumi, uova, carne, salumi e formaggi per adulti e bambine, verdura a ogni pasto, integrali almeno 3 volte.
+- **Mensa Ribò:** la funzione legge da riboscuola.it il menù delle scuole scelte in Famiglia (Fiorini, Casa del Bosco) e lo salva nella settimana (`attendance[data].school`). Per le bambine il conto vale su mensa + casa.
+- **Controllo dopo ogni menù:** ogni piatto ha le etichette `tags` (proteina, verdura, integrale). Se la settimana non torna, l'app chiede una correzione di al massimo 3 piatti (modalità `fix`). Il riquadro Equilibrio mostra i conti.
+- **Porzioni per età** (Margherita ½, Rebecca 0,8), verdura di stagione, frutta di stagione in lista (2-3 porzioni al giorno a testa), avanzi in frigo da usare, sere di nuoto e basket.
+- **Voti:** 👍/👎 dopo cena; due "no" e il piatto non torna più. **Ricette da link o testo** in Ricette.
+- **Mark** ha lo strumento `menu` ("cosa si mangia stasera?"); **Filo** mette la cena nel buongiorno delle 7:30 e cosa preparare per domani alle 18:30.
+
 ## Come è fatta
-- HTML, CSS e JavaScript senza build: `index.html`, `style.css`, `app.js`, `config.js`.
+- HTML, CSS e JavaScript senza build: `index.html`, `style.css`, `app.js`, `nutrition.js`, `config.js`.
 - Dati e accessi: Supabase (progetto `menu-famiglia`), con regole di accesso per famiglia (`supabase/migrations`).
 - AI: funzione Supabase `genera-menu` (`supabase/functions/genera-menu`) che chiama Claude Sonnet 5.5. La chiave Anthropic è un secret di Supabase e non è mai nell'app.
 - Pubblicazione: GitHub Pages.
