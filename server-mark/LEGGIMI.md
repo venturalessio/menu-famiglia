@@ -46,8 +46,10 @@ dello schermo nel thread.
 
 ## Modifiche
 
-`mark_telegram.py` è la fonte. `python3 genera-cloud-config.py` rigenera `cloud-config.yaml`
-con il bot dentro. Per un server già acceso il file va copiato in `/opt/mark/` e il servizio
+`mark_telegram.py` è il bot, `installa.sh` prepara il server. `cloud-config.yaml` contiene
+solo le chiavi e scarica `installa.sh` e il bot da GitHub a un commit fisso (un testo lungo si
+rovinava copiandolo dal telefono). Dopo una modifica, aggiornare il commit in `cloud-config.yaml`.
+Il registro dell'installazione è in `/var/log/mark-installa.log`. Per un server già acceso il file va copiato in `/opt/mark/` e il servizio
 riavviato (`systemctl restart mark-telegram`).
 
 Costo: CX23 5,49 € + IVA al mese più l'IPv4 (prezzi dopo il 15 giugno 2026), più il
