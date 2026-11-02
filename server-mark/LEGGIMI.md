@@ -15,6 +15,16 @@ da `filo-whatsapp`.
   viene ignorato. I messaggi più vecchi di 10 minuti (servizio spento) non si eseguono.
 - Regole di casa, serrature e allarmi: sono quelle della web-app, decise dalla funzione.
 
+## Avvisi da evento (tappa 3)
+
+- Ogni 10 minuti, dalle 7 alle 22, il bot chiama l'azione `sentinella` della funzione `mark`.
+- La funzione guarda le mail Gmail arrivate dopo l'ultima vista e i cambiamenti di oggi e domani
+  (calendari iCloud + eventi e accompagnamenti di Filo). Senza novità non chiama Claude.
+- Con novità, Claude Haiku decide cosa merita un avviso (persone, scuola, scadenze, eventi spostati;
+  niente newsletter o pubblicità) e il bot lo manda con 🔔. Di notte le novità aspettano il mattino.
+- Stato in `public.mark_sentinella`; ogni giro con avvisi finisce in `mark_log` (canale `sentinella`).
+- `/avvisi_off` mette in pausa, `/avvisi_on` riattiva.
+
 ## Sicurezza del server
 
 - Firewall: nessuna connessione in entrata. Accesso con password da SSH spento: si entra solo
