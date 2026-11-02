@@ -593,12 +593,38 @@ async function agendaFilo(dal: string, giorni: number) {
 
 // ---------- Menù di famiglia (stessa base dati) ----------
 
+// Scuole delle bambine: dalle impostazioni della famiglia, altrimenti quelle predefinite dell'app
+const SCUOLE_DEFAULT: Record<string, string> = { Rebecca: "Fiorini", Margherita: "Casa del Bosco" };
+
+// Menù della mensa Ribò letto in diretta (stessa lettura dell'app, modalità "school" di genera-menu)
+async function mensaRibo(date: string[]): Promise<Record<string, Record<string, any[]>>> {
+  if (!date.length) return {};
+  const h: any[] = await db(`households?select=settings&limit=1`);
+  const scuole = Object.entries(h[0]?.settings?.schools ?? SCUOLE_DEFAULT).filter(([, v]) => v).map(([name, school]) => ({ name, school }));
+  if (!scuole.length) return {};
+  const url = Deno.env.get("SUPABASE_URL");
+  const key = Deno.env.get("SUPABASE_ANON_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const r = await fetch(`${url}/functions/v1/genera-menu`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, apikey: key ?? "" },
+    body: JSON.stringify({ mode: "school", schools: scuole, dates: date }),
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!r.ok) throw new Error(`Ribò non risponde (${r.status})`);
+  const j = await r.json();
+  const per: Record<string, Record<string, any[]>> = {};
+  for (const [chi, giorni] of Object.entries(j?.result?.schools ?? {}) as [string, Record<string, any[]>][]) {
+    for (const [d, c] of Object.entries(giorni ?? {})) if (c?.length) (per[d] ||= {})[chi] = c;
+  }
+  return per;
+}
+
 async function menuFamiglia(dal: string, giorni: number) {
   const g = Math.min(7, Math.max(1, Math.trunc(giorni) || 1));
   const oggi = partiRoma(new Date());
   const [y, m, d] = /^\d{4}-\d{2}-\d{2}$/.test(dal) ? dal.split("-").map(Number) : [oggi.y, oggi.m, oggi.d];
-  const righe: string[] = [];
   const settimane = new Map<string, any>();
+  const giornate: { data: string; w: any; feriale: boolean }[] = [];
   for (let k = 0; k < g; k++) {
     const giorno = new Date(Date.UTC(y, m - 1, d + k));
     const data = giorno.toISOString().slice(0, 10);
@@ -607,18 +633,27 @@ async function menuFamiglia(dal: string, giorni: number) {
       const w: any[] = await db(`weeks?select=plan,attendance&week_start=eq.${lun}&order=updated_at.desc&limit=1`);
       settimane.set(lun, w[0] ?? null);
     }
-    const w = settimane.get(lun);
+    giornate.push({ data, w: settimane.get(lun), feriale: giorno.getUTCDay() >= 1 && giorno.getUTCDay() <= 5 });
+  }
+  // La mensa non dipende dal menù di casa: se l'app non l'ha ancora salvata, la leggo da Ribò
+  const mancanti = giornate.filter((x) => x.feriale && !x.w?.attendance?.[x.data]?.school).map((x) => x.data);
+  let diretta: Record<string, Record<string, any[]>> = {};
+  let erroreMensa = "";
+  try { diretta = await mensaRibo(mancanti); } catch (e) { erroreMensa = (e as Error).message; }
+
+  const piatto = (p: any) => p?.takeaway ? "pizza o asporto" : p ? `${p.title}${p.minutes ? ` (${p.minutes} min)` : ""}${p.note ? ` · nota: ${p.note}` : ""}` : null;
+  const righe: string[] = [];
+  for (const { data, w, feriale } of giornate) {
     const day = w?.plan?.days?.find((x: any) => x.date === data);
-    if (!day) { righe.push(`${data}: nessun menù pianificato.`); continue; }
-    const piatto = (p: any) => p?.takeaway ? "pizza o asporto" : p ? `${p.title}${p.minutes ? ` (${p.minutes} min)` : ""}${p.note ? ` · nota: ${p.note}` : ""}` : null;
-    const scuola = w?.attendance?.[data]?.school;
-    const mensa = scuola ? Object.entries(scuola).map(([chi, c]: [string, any]) => `${chi}: ${(c ?? []).filter((x: any) => /prim|second/i.test(x.course)).map((x: any) => x.name).join(", ")}`).join("; ") : null;
+    const scuola = w?.attendance?.[data]?.school ?? diretta[data];
+    const mensa = scuola ? Object.entries(scuola).map(([chi, c]: [string, any]) => `${chi}: ${(c ?? []).filter((x: any) => /prim|second|contorn|frutt/i.test(x.course)).map((x: any) => x.name).join(", ")}`).join("; ") : null;
     righe.push([
       `${data}:`,
-      day.lunch ? `pranzo ${piatto(day.lunch)}` : null,
-      day.sick ? `pranzo di riserva ${piatto(day.sick.meal)}` : null,
-      `cena ${piatto(day.dinner) ?? "da decidere"}`,
-      mensa ? `a scuola ${mensa}` : null,
+      day ? null : "menù di casa non ancora pianificato",
+      day?.lunch ? `pranzo ${piatto(day.lunch)}` : null,
+      day?.sick ? `pranzo di riserva ${piatto(day.sick.meal)}` : null,
+      day ? `cena ${piatto(day.dinner) ?? "da decidere"}` : null,
+      mensa ? `a scuola (mensa Ribò) ${mensa}` : feriale ? `a scuola: menù della mensa non disponibile${erroreMensa ? ` (${erroreMensa})` : " (festa o non ancora pubblicato)"}` : null,
     ].filter(Boolean).join(" · "));
   }
   return righe.join("\n");
@@ -1060,7 +1095,7 @@ const TOOLS: any[] = [
   },
   {
     name: "menu",
-    description: "Menù di famiglia: cosa si mangia a pranzo e a cena (con note tipo 'scongela il pesce'), e cosa mangiano le bambine alla mensa. Usalo per 'cosa si mangia stasera?', 'cosa cucino domani?'.",
+    description: "Menù di famiglia: cosa si mangia a pranzo e a cena (con note tipo 'scongela il pesce'), e cosa mangiano le bambine alla mensa. Usalo per 'cosa si mangia stasera?', 'cosa cucino domani?', 'cosa mangia Margherita (o Rebecca) a scuola domani?'. La mensa (Ribò) c'è anche quando il menù di casa non è ancora pianificato.",
     strict: true,
     input_schema: {
       type: "object",
