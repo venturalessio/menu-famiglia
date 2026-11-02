@@ -217,3 +217,25 @@ label { display: block; font-size: 14px; color: var(--muted); margin: 12px 0 4px
 @media (prefers-reduced-transparency: reduce) {
   .tabbar { background: var(--card); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+
+/* Equilibrio della settimana (linee guida CREA) */
+.balance summary { cursor: pointer; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; list-style: none; }
+.balance summary::-webkit-details-marker { display: none; }
+.balance.ok summary b { color: var(--accent); }
+.balance.warn summary b { color: var(--warn); }
+.balance > .muted.small { margin-top: 12px; }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.pill {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  padding: 4px 10px; border-radius: 999px; font-size: 13px;
+  background: var(--accent-soft); color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.pill b { font-weight: 650; }
+.pill .lim { color: var(--muted); font-size: 12px; }
+.pill.poco, .pill.troppo { background: var(--warn-soft); }
+.pill.poco b, .pill.troppo b { color: var(--warn); }
+.school { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); line-height: 1.35; }
+.school .muted { margin-right: 4px; }
+.vote { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+.vote .small { margin-right: auto; }

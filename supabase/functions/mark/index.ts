@@ -591,6 +591,39 @@ async function agendaFilo(dal: string, giorni: number) {
   return righe.join("\n");
 }
 
+// ---------- Menù di famiglia (stessa base dati) ----------
+
+async function menuFamiglia(dal: string, giorni: number) {
+  const g = Math.min(7, Math.max(1, Math.trunc(giorni) || 1));
+  const oggi = partiRoma(new Date());
+  const [y, m, d] = /^\d{4}-\d{2}-\d{2}$/.test(dal) ? dal.split("-").map(Number) : [oggi.y, oggi.m, oggi.d];
+  const righe: string[] = [];
+  const settimane = new Map<string, any>();
+  for (let k = 0; k < g; k++) {
+    const giorno = new Date(Date.UTC(y, m - 1, d + k));
+    const data = giorno.toISOString().slice(0, 10);
+    const lun = new Date(giorno.getTime() - ((giorno.getUTCDay() + 6) % 7) * 864e5).toISOString().slice(0, 10);
+    if (!settimane.has(lun)) {
+      const w: any[] = await db(`weeks?select=plan,attendance&week_start=eq.${lun}&order=updated_at.desc&limit=1`);
+      settimane.set(lun, w[0] ?? null);
+    }
+    const w = settimane.get(lun);
+    const day = w?.plan?.days?.find((x: any) => x.date === data);
+    if (!day) { righe.push(`${data}: nessun menù pianificato.`); continue; }
+    const piatto = (p: any) => p?.takeaway ? "pizza o asporto" : p ? `${p.title}${p.minutes ? ` (${p.minutes} min)` : ""}${p.note ? ` · nota: ${p.note}` : ""}` : null;
+    const scuola = w?.attendance?.[data]?.school;
+    const mensa = scuola ? Object.entries(scuola).map(([chi, c]: [string, any]) => `${chi}: ${(c ?? []).filter((x: any) => /prim|second/i.test(x.course)).map((x: any) => x.name).join(", ")}`).join("; ") : null;
+    righe.push([
+      `${data}:`,
+      day.lunch ? `pranzo ${piatto(day.lunch)}` : null,
+      day.sick ? `pranzo di riserva ${piatto(day.sick.meal)}` : null,
+      `cena ${piatto(day.dinner) ?? "da decidere"}`,
+      mensa ? `a scuola ${mensa}` : null,
+    ].filter(Boolean).join(" · "));
+  }
+  return righe.join("\n");
+}
+
 // ---------- Calendario (iCloud, in diretta) ----------
 
 // I link privati dei calendari restano solo nella scheda Notion del Capo-squadra: Mark li legge da lì
@@ -1024,6 +1057,20 @@ const TOOLS: any[] = [
     },
   },
   {
+    name: "menu",
+    description: "Menù di famiglia: cosa si mangia a pranzo e a cena (con note tipo 'scongela il pesce'), e cosa mangiano le bambine alla mensa. Usalo per 'cosa si mangia stasera?', 'cosa cucino domani?'.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        dal: { type: "string", description: "Primo giorno, AAAA-MM-GG (ora di Roma)" },
+        giorni: { type: "integer", description: "Quanti giorni, da 1 a 7" },
+      },
+      required: ["dal", "giorni"],
+    },
+  },
+  {
     name: "calendario",
     description: "Eventi dei calendari iCloud di Alessio (personale e famiglia), letti in diretta, ricorrenze incluse. Usalo solo se agenda non basta (per esempio un evento appena aggiunto o più di 14 giorni avanti).",
     strict: true,
@@ -1185,6 +1232,8 @@ async function eseguiStrumento(block: any, richieste: any[], azioni: string[], c
     }
     case "agenda":
       return await agendaFilo(String(i.dal ?? ""), Number(i.giorni ?? 1));
+    case "menu":
+      return await menuFamiglia(String(i.dal ?? ""), Number(i.giorni ?? 1));
     case "calendario":
       return await eventiCalendario(String(i.dal ?? ""), Number(i.giorni ?? 1));
     case "posta_cerca":

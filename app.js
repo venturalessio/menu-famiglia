@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
+import * as N from "./nutrition.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -16,7 +17,7 @@ const LUNCH_MODES = [
   { id: "fuori", label: "Fuori" },
 ];
 const DEFAULT_SETTINGS = {
-  adults: ["Alessio", "Compagna"],
+  adults: ["Alessio", "Elena"],
   kids: ["Rebecca", "Margherita"],
   pantry: [
     "sale", "pepe", "olio extravergine", "aceto", "zucchero", "farina", "pasta", "riso",
@@ -26,6 +27,19 @@ const DEFAULT_SETTINGS = {
   breakfast: ["latte", "biscotti", "fette biscottate", "marmellata", "cereali", "yogurt", "caffè", "frutta"],
   reserve: [],
   notes: "",
+  // età delle bambine: servono per le porzioni (CREA/SINU)
+  kidAges: { Rebecca: 10, Margherita: 4 },
+  // scuola servita dalla mensa Ribò (nome come sul sito riboscuola.it)
+  schools: { Rebecca: "Fiorini", Margherita: "Casa del Bosco" },
+  // sere particolari, per giorno della settimana (1 = lunedì … 0 = domenica)
+  schedule: {
+    1: "Rebecca a nuoto dopo la scuola: si cena più tardi",
+    2: "Rebecca a nuoto; Alessio a basket la sera: cena veloce o pronta prima",
+    3: "Rebecca a nuoto dopo la scuola: si cena più tardi",
+    4: "Rebecca a nuoto dopo la scuola: si cena più tardi",
+    5: "Rebecca a nuoto dopo la scuola: si cena più tardi",
+  },
+  leftovers: [],
 };
 
 // ---------- Stato ----------
@@ -398,26 +412,189 @@ async function callAI(payload) {
   return data.result;
 }
 
+function kidsInfo() {
+  const st = settings();
+  return st.kids.map((name) => ({ name, age: st.kidAges?.[name] ?? 8 }));
+}
+
 function aiContext() {
   const st = settings();
   const since = iso(addDays(parseIso(S.weekStart), -14));
+  const votes = N.votesSummary(S.recipes);
   return {
     pantry: st.pantry,
     favorites: S.recipes.filter((r) => r.favorite).map((r) => r.title).slice(0, 30),
+    liked: votes.liked.slice(0, 30),
+    disliked: votes.disliked.slice(0, 40),
     recent: S.recipes.filter((r) => r.last_used && r.last_used >= since && r.last_used < S.weekStart).map((r) => r.title).slice(0, 30),
+    portions: N.portionsText(st.adults.length, kidsInfo()),
+    seasonVeg: N.seasonVeg(parseIso(S.weekStart).getMonth() + 1),
+    leftovers: st.leftovers || [],
     notes: st.notes,
   };
 }
 
+// ---------- Mensa ----------
+// attendance[date].school = { Rebecca: [{course, name, ingredients}], Margherita: [...] }
+function schoolOf(date) {
+  return S.week?.attendance?.[date]?.school || null;
+}
+function schoolProteins(date) {
+  const sc = schoolOf(date);
+  if (!sc) return [];
+  return [...new Set(Object.values(sc).flatMap((courses) => N.classifySchoolDay({ courses })))];
+}
+function schoolMap() {
+  const out = {};
+  for (const date of weekDates(S.weekStart)) if (!isWeekend(date) && schoolOf(date)) out[date] = schoolProteins(date);
+  return out;
+}
+// "Rebecca e Margherita: gramigna al ragù di soia, tortino di zucchine" (solo primo, secondo e contorno)
+function schoolText(date) {
+  const sc = schoolOf(date);
+  if (!sc) return "";
+  const pick = (courses) => courses.filter((c) => /prim|second|contorn|unico/i.test(c.course)).map((c) => c.name.toLowerCase()).join(", ");
+  const byMenu = new Map();
+  for (const [kid, courses] of Object.entries(sc)) {
+    const t = pick(courses || []);
+    if (!t) continue;
+    byMenu.set(t, [...(byMenu.get(t) || []), kid]);
+  }
+  return [...byMenu.entries()].map(([t, kids]) => `${kids.join(" e ")}: ${t}`).join("; ");
+}
+
+async function loadSchool(force = false) {
+  const st = settings();
+  const schools = Object.entries(st.schools || {}).filter(([, v]) => v).map(([name, school]) => ({ name, school }));
+  const dates = weekDates(S.weekStart).filter((d) => !isWeekend(d));
+  if (!schools.length) return;
+  if (!force && dates.every((d) => schoolOf(d) || S.week.attendance?.[d]?.schoolNone)) return;
+  const key = `${S.household.id}|${S.weekStart}`;
+  if (!force && loadSchool.tried?.has(key)) return;
+  (loadSchool.tried ||= new Set()).add(key);
+  try {
+    const res = await callAI({ mode: "school", schools, dates });
+    const att = structuredClone(S.week.attendance || {});
+    let found = 0;
+    for (const date of dates) {
+      const day = {};
+      for (const { name } of schools) {
+        const courses = res.schools?.[name]?.[date];
+        if (courses?.length) day[name] = courses;
+      }
+      att[date] = { ...(att[date] || {}) };
+      if (Object.keys(day).length) { att[date].school = day; delete att[date].schoolNone; found++; }
+      else att[date].schoolNone = true; // festa o menù non ancora pubblicato
+    }
+    await saveWeek({ attendance: att });
+    if (res.errors?.length) toast(res.errors.join(" · "), 5000);
+    else if (force) toast(found ? `Menù della mensa letto per ${found} giorni.` : "Ribò non ha ancora il menù di questa settimana.");
+  } catch (e) {
+    if (force) toast("Mensa: " + e.message, 5000);
+  }
+}
+
+// ---------- Equilibrio ----------
+function balanceOf(plan) {
+  const st = settings();
+  return N.weekBalance(plan, {
+    school: schoolMap(),
+    isWeekend,
+    adultsLunch: (date) => {
+      const att = attendanceFor(date);
+      return st.adults.filter((_, i) => ["casa", "porta"].includes(att.lunch[i])).length;
+    },
+  });
+}
+
+function currentMeals(plan) {
+  const out = [];
+  for (const d of plan.days) {
+    for (const slot of ["lunch", "dinner"]) {
+      const m = d[slot];
+      if (!m || m.takeaway) continue;
+      out.push({ date: d.date, slot, title: m.title, protein: m.tags?.protein || "?", verdura: !!m.tags?.verdura, school: slot === "dinner" ? schoolText(d.date) : "" });
+    }
+  }
+  return out;
+}
+
+// Chiede al modello di correggere solo i pasti che sbilanciano la settimana.
+async function fixBalance(plan, bal) {
+  const res = await callAI({ mode: "fix", current: currentMeals(plan), problems: N.problemsText(bal.problems), ...aiContext() });
+  let n = 0;
+  for (const c of (res.changes || []).slice(0, 3)) {
+    const d = plan.days.find((x) => x.date === c.date);
+    if (!d || !c.meal || !d[c.slot] || d[c.slot].takeaway) continue;
+    d[c.slot] = c.meal;
+    n++;
+  }
+  return n;
+}
+
+function balanceHtml(plan) {
+  const bal = balanceOf(plan);
+  const pill = (r) => {
+    const lim = r.min === r.max ? `${r.min}` : r.min > 0 && r.max < 9 ? `${r.min}-${r.max}` : r.min > 0 ? `≥${r.min}` : `≤${r.max}`;
+    return `<span class="pill ${r.status}" title="${esc(N.keyLabel(r.key))}: ${r.n} (consigliato ${lim})">${esc(N.keyLabel(r.key))} <b>${r.n}</b><span class="lim">/${lim}</span></span>`;
+  };
+  const kids = bal.rows.filter((r) => r.who === "bambine");
+  const adults = bal.rows.filter((r) => r.who === "adulti");
+  const ok = !bal.problems.length;
+  const vegOk = bal.withVeg >= bal.meals - bal.untagged;
+  return `<details class="card balance ${ok ? "ok" : "warn"}" ${S.balanceOpen ?? !ok ? "open" : ""} id="balance">
+    <summary><b>${ok ? "Settimana equilibrata" : `Da sistemare: ${bal.problems.length}`}</b>
+      <span class="muted small">Linee guida CREA</span></summary>
+    ${bal.untagged ? `<p class="muted small">${bal.untagged} piatti sono di un menù vecchio, senza etichette: non li conto.</p>` : ""}
+    <div class="muted small">Bambine, mensa compresa${bal.hasSchool ? "" : " (menù della mensa non ancora letto)"}</div>
+    <div class="pills">${kids.map(pill).join("")}</div>
+    <div class="muted small">Adulti</div>
+    <div class="pills">${adults.map(pill).join("")}</div>
+    <div class="pills">
+      <span class="pill ${vegOk ? "ok" : "poco"}">Verdura <b>${bal.withVeg}</b><span class="lim">/${bal.meals - bal.untagged} pasti</span></span>
+      <span class="pill ${bal.wholegrain >= 3 ? "ok" : "poco"}">Integrali <b>${bal.wholegrain}</b><span class="lim">/≥3</span></span>
+    </div>
+    ${ok ? "" : `<div class="actions"><button class="secondary block" id="fixbal">Sistema l'equilibrio</button></div>`}
+  </details>`;
+}
+
+function bindBalance() {
+  const d = document.getElementById("balance");
+  if (d) d.ontoggle = () => { S.balanceOpen = d.open; };
+  document.getElementById("fixbal")?.addEventListener("click", async () => {
+    const plan = S.week.plan;
+    S.busy = "Sistemo l'equilibrio della settimana…";
+    render();
+    try {
+      const n = await fixBalance(plan, balanceOf(plan));
+      S.busy = null;
+      await saveWeek({ plan });
+      await rememberRecipes(plan);
+      toast(n ? `Cambiati ${n} piatti. Ricordati di aggiornare la spesa.` : "Nessun cambio proposto.");
+    } catch (e) {
+      S.busy = null;
+      toast(e.message, 5000);
+    }
+    render();
+  });
+}
+
 async function generateWeek() {
+  const st = settings();
+  S.busy = "Leggo il menù della mensa…";
+  render();
+  await loadSchool();
   const days = weekDates(S.weekStart).map((date) => {
     const l = lunchSummary(date);
+    const wd = parseIso(date).getDay();
     return {
       date,
-      weekday: WEEKDAYS[parseIso(date).getDay()],
+      weekday: WEEKDAYS[wd],
       lunchEaters: l.eaters,
       lunchNote: l.note,
       dinnerSkip: attendanceFor(date).dinnerOut,
+      school: isWeekend(date) ? "" : schoolText(date),
+      schedule: st.schedule?.[wd] || "",
     };
   });
   S.busy = "Sto preparando il menù della settimana…";
@@ -440,10 +617,21 @@ async function generateWeek() {
     };
     // Le cene "fuori" segnate in anticipo: il piatto proposto finisce tra i piatti avanzati
     plan.days.forEach((d) => { if (d.spare) plan.leftover.push(d.spare); delete d.spare; });
+    // Controllo del nutrizionista: se la settimana non torna, una correzione automatica
+    const bal = balanceOf(plan);
+    if (bal.problems.length) {
+      S.busy = "Controllo l'equilibrio e sistemo qualche piatto…";
+      render();
+      try { await fixBalance(plan, bal); } catch { /* resta il menù di prima, con il riquadro arancione */ }
+    }
+    // Avanzi usati: escono dalla lista
+    const used = new Set((res.leftovers_used || []).map(norm));
+    if (used.size) await saveSettings({ leftovers: (st.leftovers || []).filter((x) => !used.has(norm(x))) });
     S.busy = null;
     await saveWeek({ plan });
     await rememberRecipes(plan);
-    toast("Menù pronto. Ora puoi creare la lista della spesa.");
+    const after = balanceOf(plan);
+    toast(after.problems.length ? "Menù pronto. Guarda il riquadro Equilibrio: c'è qualcosa da sistemare." : "Menù pronto ed equilibrato. Ora puoi creare la lista della spesa.", 4000);
   } catch (e) {
     S.busy = null;
     toast(e.message, 5000);
@@ -456,7 +644,10 @@ async function rememberRecipes(plan) {
   for (const d of plan.days) {
     for (const slot of ["lunch", "dinner"]) {
       const m = d[slot];
-      if (m && !m.takeaway && m.title) rows.push({ household_id: S.household.id, title: m.title, data: m, last_used: d.date });
+      if (m && !m.takeaway && m.title) {
+        const old = S.recipes.find((r) => r.title === m.title);
+        rows.push({ household_id: S.household.id, title: m.title, data: { ...m, votes: old?.data?.votes }, last_used: d.date });
+      }
     }
   }
   const unique = Object.values(Object.fromEntries(rows.map((r) => [r.title, r])));
@@ -497,6 +688,23 @@ function renderWeek() {
   app().innerHTML = weekNav() + (plan ? weekPlanHtml() : planningHtml());
   bindWeekNav(app());
   if (plan) bindWeekPlan(); else bindPlanning();
+  // il menù della mensa si legge da solo, una volta per settimana
+  const week = S.weekStart;
+  if (!plan && !S.busy) loadSchool().then(() => { if (S.tab === "settimana" && S.weekStart === week && !S.busy) renderWeekSoft(); });
+}
+// ridisegna senza ripartire con la lettura della mensa
+function renderWeekSoft() {
+  const plan = S.week.plan;
+  app().innerHTML = weekNav() + (plan ? weekPlanHtml() : planningHtml());
+  bindWeekNav(app());
+  if (plan) bindWeekPlan(); else bindPlanning();
+}
+function schoolLine(date) {
+  if (isWeekend(date)) return "";
+  const t = schoolText(date);
+  if (t) return `<div class="school small"><span class="muted">A scuola</span> ${esc(t)}</div>`;
+  if (S.week.attendance?.[date]?.schoolNone) return `<div class="school small muted">A scuola: menù non disponibile</div>`;
+  return "";
 }
 
 function planningHtml() {
@@ -510,6 +718,8 @@ function planningHtml() {
         <div class="row between"><h3>${dayLabel(date)}</h3>
           <button class="chip ${att.dinnerOut ? "on" : ""}" data-dout="${date}">${att.dinnerOut ? "Cena fuori ✓" : "Cena fuori?"}</button>
         </div>
+        ${schoolLine(date)}
+        ${st.schedule?.[parseIso(date).getDay()] ? `<div class="muted small">🌙 ${esc(st.schedule[parseIso(date).getDay()])}</div>` : ""}
         ${isWeekend(date) ? `<p class="muted small">Pranzo per tutti e ${st.adults.length + st.kids.length}.</p>` :
           st.adults.map((name, i) => `
             <div class="row between" style="margin-top:8px">
@@ -518,7 +728,9 @@ function planningHtml() {
             </div>`).join("")}
       </div>`;
     }).join("")}
-    <div class="actions"><button class="block" id="gen">Genera il menù</button></div>
+    ${chipEditor("leftovers", "Avanzi in frigo", "Cosa è rimasto (es. mezza zucca, ceci aperti): il menù lo usa nei primi giorni.")}
+    <div class="actions"><button class="block" id="gen">Genera il menù</button>
+      <button class="ghost" id="school">Rileggi il menù della mensa</button></div>
     <p class="muted small center">Casa = pranzo a casa · Porta = pranzo da portare · Fuori = mensa o ristorante</p>`;
 }
 
@@ -539,6 +751,14 @@ function bindPlanning() {
     renderWeek();
   }));
   document.getElementById("gen").onclick = generateWeek;
+  document.getElementById("school").onclick = async () => {
+    S.busy = "Leggo il menù della mensa…";
+    render();
+    await loadSchool(true);
+    S.busy = null;
+    renderWeekSoft();
+  };
+  bindChipEditor(() => renderWeekSoft());
 }
 
 function mealRow(date, slot, m, extra = "") {
@@ -550,7 +770,7 @@ function mealRow(date, slot, m, extra = "") {
       <div class="title">🍕 ${esc(m.title)}</div>${extra}</div>`;
   }
   return `<div class="meal" data-meal="${date}|${slot}">
-    <div class="label">${label} · ${m.minutes} min · ${m.servings} porz.</div>
+    <div class="label">${label} · ${m.minutes} min · ${m.servings} porz.${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? "" : " · senza verdura"}` : ""}</div>
     <div class="title">${esc(m.title)}</div>
     ${m.note ? `<div class="note">${esc(m.note)}</div>` : ""}${extra}
   </div>`;
@@ -567,12 +787,14 @@ function dayCardHtml(d, withSick = false) {
       (!isWeekend(d.date) && !d.sick ? `<div class="meal muted small">Pranzo: tutti fuori</div>` : "")}
     ${d.sick ? mealRow(d.date, "sick", d.sick.meal) : ""}
     ${mealRow(d.date, "dinner", d.dinner)}
+    ${schoolLine(d.date)}
   </div>`;
 }
 
 function weekPlanHtml() {
   const plan = S.week.plan;
   return `
+    ${balanceHtml(plan)}
     ${plan.days.map((d) => dayCardHtml(d, true)).join("")}
     ${plan.leftover?.length ? `<h2>Piatti rimasti</h2><p class="muted small">Cene spostate fuori dalla settimana per pizza o asporto: gli ingredienti potrebbero essere già in casa.</p>
       <div class="card">${plan.leftover.map((m) => `<div class="meal"><div class="title">${esc(m.title)}</div></div>`).join("")}</div>` : ""}
@@ -589,6 +811,7 @@ function bindWeekPlan() {
   }));
   app().querySelectorAll("[data-sick]").forEach((b) => (b.onclick = () => sickDay(b.dataset.sick)));
   document.getElementById("tolist").onclick = buildShoppingList;
+  bindBalance();
   document.getElementById("replan").onclick = () => {
     if (!confirm("Ripianificare? Il menù attuale verrà sostituito.")) return;
     saveWeek({ plan: null });
@@ -623,8 +846,12 @@ function openMeal(date, slot) {
     <p class="muted small">${dayLabel(date)}${date === today ? " · oggi" : ""}</p>
     <h2 style="margin-top:0">${esc(m.title)}</h2>
     ${m.takeaway ? `<p>Serata libera. Il piatto previsto è stato spostato al giorno dopo.</p>` : `
-      <p class="muted">${m.minutes} minuti · ${m.servings} porzioni</p>
+      <p class="muted">${m.minutes} minuti · ${m.servings} porzioni${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? " · con verdura" : " · senza verdura"}${m.tags.integrale ? " · integrale" : ""}` : ""}</p>
       ${m.note ? `<p class="badge warn">${esc(m.note)}</p>` : ""}
+      ${slot === "dinner" && schoolText(date) ? `<p class="muted small">A pranzo a scuola: ${esc(schoolText(date))}</p>` : ""}
+      ${date <= today ? `<div class="vote"><span class="small">Alle bimbe è piaciuto?</span>
+        <button class="chip ${S.voted?.[date + slot] === "up" ? "on" : ""}" data-vote="up">👍 Sì</button>
+        <button class="chip ${S.voted?.[date + slot] === "down" ? "on" : ""}" data-vote="down">👎 No</button></div>` : ""}
       <h3>Ingredienti</h3>
       <ul>${(m.ingredients || []).map((i) => `<li>${esc(i.name)} <span class="muted">${esc(fmtQty(i.qty, i.unit))}</span></li>`).join("")}</ul>
       <h3>Come si fa</h3>
@@ -641,14 +868,37 @@ function openMeal(date, slot) {
       closeSheet();
       render();
     }));
+    root.querySelectorAll("[data-vote]").forEach((b) => (b.onclick = async () => {
+      await vote(m, b.dataset.vote, date + slot);
+      root.querySelectorAll("[data-vote]").forEach((x) => x.classList.toggle("on", x === b));
+    }));
   });
+}
+
+// Pollice su/giù: due "no" (e più no che sì) e il piatto non torna più
+async function vote(m, dir, key) {
+  S.voted ||= {};
+  const prev = S.voted[key];
+  if (prev === dir) return;
+  const r = S.recipes.find((x) => x.title === m.title);
+  const votes = { up: 0, down: 0, ...(r?.data?.votes || {}) };
+  if (prev) votes[prev] = Math.max(0, votes[prev] - 1);
+  votes[dir]++;
+  const { data, error } = await sb.from("recipes").upsert(
+    { household_id: S.household.id, title: m.title, data: { ...(r?.data || m), votes }, favorite: !!r?.favorite, last_used: r?.last_used || null },
+    { onConflict: "household_id,title" },
+  ).select().single();
+  if (error) return toast(error.message);
+  S.voted[key] = dir;
+  S.recipes = [data, ...S.recipes.filter((x) => x.title !== m.title)];
+  toast(dir === "up" ? "Segnato: tornerà più spesso." : votes.down >= 2 && votes.down > votes.up ? "Bocciato: non lo propongo più." : "Segnato. Al secondo no non lo propongo più.");
 }
 
 async function toggleFavorite(m) {
   const r = S.recipes.find((x) => x.title === m.title);
   const favorite = !r?.favorite;
   const { data, error } = await sb.from("recipes").upsert(
-    { household_id: S.household.id, title: m.title, data: m, favorite, last_used: r?.last_used || null },
+    { household_id: S.household.id, title: m.title, data: { ...m, votes: r?.data?.votes }, favorite, last_used: r?.last_used || null },
     { onConflict: "household_id,title" },
   ).select().single();
   if (error) return toast(error.message);
@@ -664,7 +914,8 @@ async function swapMeal(date, slot, weekday) {
     const weekTitles = S.week.plan.days.flatMap((d) => [d.lunch?.title, d.dinner?.title]).filter(Boolean);
     const res = await callAI({
       mode: "swap", slot: slot === "dinner" ? "dinner" : "lunch", date, servings: cur.servings,
-      current: cur.title, weekTitles, quick: weekday, ...aiContext(),
+      current: cur.title, protein: cur.tags?.protein, school: slot === "dinner" ? schoolText(date) : "",
+      weekTitles, quick: weekday, ...aiContext(),
     });
     const m = res.meals?.[0];
     if (!m) throw new Error("Nessuna proposta, riprova.");
@@ -816,6 +1067,12 @@ async function buildShoppingList() {
   const checkedNames = new Set(S.items.filter((i) => i.checked && i.source === "menu").map((i) => norm(i.name)));
   const old = S.items.filter((i) => i.source === "menu").map((i) => i.id);
   if (old.length) await sb.from("shopping_items").delete().in("id", old);
+  // Frutta di stagione: 2-3 porzioni al giorno a testa (CREA), anche se non è in nessuna ricetta
+  const fruit = N.fruitPlan(parseIso(S.weekStart).getMonth() + 1, st.adults.length, st.kids.length);
+  for (const f of fruit.items) {
+    if (byName.has(norm(f.name))) continue;
+    byName.set(norm(f.name), { name: f.name, qty: `${f.portions} porzioni`, aisle: "Frutta e verdura" });
+  }
   const rows = [...byName.values()].map((v) => ({
     household_id: S.household.id, name: v.name, qty: v.qty, aisle: v.aisle, source: "menu",
     checked: checkedNames.has(norm(v.name)),
@@ -825,7 +1082,7 @@ async function buildShoppingList() {
   S.items = [...S.items.filter((i) => i.source !== "menu"), ...data];
   S.tab = "spesa";
   render();
-  toast(`Lista pronta: ${rows.length} voci dal menù.`);
+  toast(`Lista pronta: ${rows.length} voci, frutta di stagione compresa (circa ${fruit.kg} kg).`, 4000);
 }
 
 async function addItem(name, aisle, source, qty = null) {
@@ -895,17 +1152,64 @@ function renderShopping() {
 }
 
 // ---------- Ricette ----------
+function voteText(r) {
+  const v = r.data?.votes;
+  if (!v || (!v.up && !v.down)) return "";
+  return ` · 👍 ${v.up || 0} 👎 ${v.down || 0}`;
+}
+
+// Ricetta da un sito (o testo incollato): la funzione la adatta alla famiglia e finisce tra i preferiti
+function openImport() {
+  openSheet(`
+    <h2 style="margin-top:0">Aggiungi una ricetta</h2>
+    <p class="muted small">Incolla il link di un sito di ricette, oppure il testo (da Instagram copia la descrizione). La adatto alle vostre porzioni e la metto tra i preferiti.</p>
+    <form id="imp">
+      <label>Link</label>
+      <input name="url" type="url" inputmode="url" placeholder="https://…" autocomplete="off">
+      <label>Oppure il testo</label>
+      <textarea name="text" placeholder="Ingredienti e procedimento…"></textarea>
+      <div class="actions"><button class="block" type="submit">Aggiungi</button>
+        <button class="ghost" type="button" data-close>Annulla</button></div>
+    </form>`, (root) => {
+    root.querySelector("#imp").onsubmit = async (e) => {
+      e.preventDefault();
+      const url = e.target.url.value.trim(), text = e.target.text.value.trim();
+      if (!url && !text) return toast("Incolla un link o un testo.");
+      openSheet(`<div class="loading-box"><span class="spinner"></span><p>Leggo la ricetta…</p></div>`);
+      try {
+        const res = await callAI({ mode: "import", url: url || undefined, text: text || undefined, ...aiContext() });
+        const m = res.meals?.[0];
+        if (!m) throw new Error("Non ho trovato una ricetta.");
+        const { data, error } = await sb.from("recipes").upsert(
+          { household_id: S.household.id, title: m.title, data: { ...m, source: url || "testo" }, favorite: true },
+          { onConflict: "household_id,title" },
+        ).select().single();
+        if (error) throw error;
+        S.recipes = [data, ...S.recipes.filter((x) => x.title !== m.title)];
+        closeSheet();
+        render();
+        toast(`"${m.title}" aggiunta ai preferiti.`);
+      } catch (err) {
+        closeSheet();
+        toast(err.message, 5000);
+      }
+    };
+  });
+}
+
 function renderRecipes() {
   const fav = S.recipes.filter((r) => r.favorite);
   const others = S.recipes.filter((r) => !r.favorite).slice(0, 40);
   const row = (r) => `<div class="card tap" data-recipe="${esc(r.id)}">
     <div class="row between"><b class="grow">${esc(r.title)}</b>${r.favorite ? "★" : ""}</div>
-    <div class="muted small">${r.data?.minutes ? `${r.data.minutes} min · ` : ""}${r.last_used ? `ultima volta ${esc(r.last_used.split("-").reverse().join("/"))}` : ""}</div></div>`;
+    <div class="muted small">${r.data?.minutes ? `${r.data.minutes} min · ` : ""}${r.last_used ? `ultima volta ${esc(r.last_used.split("-").reverse().join("/"))}` : ""}${voteText(r)}</div></div>`;
   app().innerHTML = `
+    <div class="actions"><button class="secondary block" id="import">＋ Aggiungi una ricetta da un link o da un testo</button></div>
     <h2>Preferiti</h2>
     ${fav.length ? fav.map(row).join("") : `<p class="muted small">Ancora nessuno. Apri un piatto del menù e tocca "Salva tra i preferiti": l'app lo riproporrà più spesso.</p>`}
     <h2>Fatti di recente</h2>
     ${others.length ? others.map(row).join("") : `<p class="muted small">Qui compaiono i piatti dei menù generati.</p>`}`;
+  document.getElementById("import").onclick = openImport;
   app().querySelectorAll("[data-recipe]").forEach((el) => (el.onclick = () => {
     const r = S.recipes.find((x) => x.id === el.dataset.recipe);
     const m = r.data || {};
@@ -934,11 +1238,29 @@ async function saveSettings(patch) {
 }
 
 function chipEditor(key, title, hint) {
-  const list = settings()[key];
+  const list = settings()[key] || [];
   return `<h2>${title}</h2><p class="muted small">${hint}</p>
     <div class="chips">${list.map((x, i) => `<button class="chip" data-del="${key}|${i}">${esc(x)}<span class="x">✕</span></button>`).join("")}</div>
     <form class="row" data-addto="${key}" style="margin-top:8px">
       <input name="v" class="grow" placeholder="Aggiungi…" autocomplete="off"><button type="submit">+</button></form>`;
+}
+
+function bindChipEditor(after) {
+  app().querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
+    const [key, i] = b.dataset.del.split("|");
+    const list = [...(settings()[key] || [])];
+    list.splice(+i, 1);
+    await saveSettings({ [key]: list });
+    after();
+  }));
+  app().querySelectorAll("[data-addto]").forEach((f) => (f.onsubmit = async (e) => {
+    e.preventDefault();
+    const v = f.v.value.trim().toLowerCase();
+    if (!v) return;
+    const key = f.dataset.addto;
+    await saveSettings({ [key]: [...(settings()[key] || []), v] });
+    after();
+  }));
 }
 
 function renderSettings() {
@@ -955,6 +1277,17 @@ function renderSettings() {
     <h2>Bambine</h2>
     <p class="muted small">Pranzano a scuola dal lunedì al venerdì.</p>
     <input id="kids" value="${esc(st.kids.join(", "))}">
+    <p class="muted small">Età e scuola: servono per le porzioni e per leggere il menù della mensa Ribò (nome della scuola come su riboscuola.it).</p>
+    ${st.kids.map((k) => `<div class="row" style="margin-bottom:8px">
+      <span class="grow">${esc(k)}</span>
+      <input data-age="${esc(k)}" type="number" min="1" max="18" inputmode="numeric" value="${esc(st.kidAges?.[k] ?? "")}" style="width:70px" aria-label="Età di ${esc(k)}">
+      <input data-school="${esc(k)}" value="${esc(st.schools?.[k] ?? "")}" placeholder="Scuola" style="width:150px" aria-label="Scuola di ${esc(k)}">
+    </div>`).join("")}
+    <p class="muted small">${esc(N.portionsText(st.adults.length, kidsInfo()))}.</p>
+    <h2>Le vostre sere</h2>
+    <p class="muted small">Sport, impegni, cene tardi: il menù ne tiene conto (piatti più veloci o pronti prima).</p>
+    ${[1, 2, 3, 4, 5, 6, 0].map((wd) => `<label>${WEEKDAYS[wd]}</label>
+      <input data-sched="${wd}" value="${esc(st.schedule?.[wd] || "")}" placeholder="Niente di particolare">`).join("")}
     ${chipEditor("pantry", "Dispensa base", "Sempre in casa: non entrano nella lista del menù. Quando finiscono, segnale in Spesa.")}
     ${chipEditor("breakfast", "Colazione", "Sempre gli stessi prodotti: li aggiungi alla spesa quando finiscono.")}
     <h2>Pranzi di riserva</h2>
@@ -971,25 +1304,15 @@ function renderSettings() {
     <div class="actions"><button class="block" id="save">Salva</button>
       <button class="ghost" id="logout">Esci</button></div>`;
 
-  app().querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => {
-    const [key, i] = b.dataset.del.split("|");
-    const list = [...settings()[key]];
-    list.splice(+i, 1);
-    await saveSettings({ [key]: list });
-    renderSettings();
-  }));
-  app().querySelectorAll("[data-addto]").forEach((f) => (f.onsubmit = async (e) => {
-    e.preventDefault();
-    const v = f.v.value.trim().toLowerCase();
-    if (!v) return;
-    const key = f.dataset.addto;
-    await saveSettings({ [key]: [...settings()[key], v] });
-    renderSettings();
-  }));
+  bindChipEditor(renderSettings);
   document.getElementById("save").onclick = async () => {
     const adults = [...app().querySelectorAll("[data-adult]")].map((i) => i.value.trim()).filter(Boolean);
     const kids = document.getElementById("kids").value.split(",").map((s) => s.trim()).filter(Boolean);
-    await saveSettings({ adults, kids, notes: document.getElementById("notes").value.trim() });
+    const kidAges = { ...(settings().kidAges || {}) }, schools = { ...(settings().schools || {}) }, schedule = {};
+    app().querySelectorAll("[data-age]").forEach((i) => { if (i.value) kidAges[i.dataset.age] = Number(i.value); });
+    app().querySelectorAll("[data-school]").forEach((i) => { schools[i.dataset.school] = i.value.trim(); });
+    app().querySelectorAll("[data-sched]").forEach((i) => { if (i.value.trim()) schedule[i.dataset.sched] = i.value.trim(); });
+    await saveSettings({ adults, kids, kidAges, schools, schedule, notes: document.getElementById("notes").value.trim() });
     toast("Salvato.");
   };
   document.getElementById("newres").onclick = async () => {
