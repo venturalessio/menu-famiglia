@@ -141,6 +141,7 @@ function ascolta(btn, input) {
   rec.interimResults = true;
   rec.continuous = false;
   let finale = "";
+  const questo = rec;
   btn.classList.add("listening");
   rec.onresult = (e) => {
     let testo = "";
@@ -153,7 +154,9 @@ function ascolta(btn, input) {
   };
   rec.onend = () => {
     btn.classList.remove("listening");
+    const annullato = questo.annullato;
     rec = null;
+    if (annullato) return;
     const testo = (finale || input.value).trim();
     if (testo) invia(testo);
   };
@@ -491,10 +494,18 @@ document.querySelectorAll("#tabbar button").forEach((b) => {
 });
 $("#refresh").onclick = () => { state.data = null; carica(); };
 
+// Se Alessio chiude l'app o cambia app mentre detta, il microfono si spegne subito e la frase a metà non parte
+function spegniMicrofono() {
+  if (!rec) return;
+  rec.annullato = true;
+  try { rec.abort(); } catch (_) { /* già fermo */ }
+}
+window.addEventListener("pagehide", spegniMicrofono);
+
 // Al ritorno sull'app dopo un po', ricarica i dati
 let nascosta = 0;
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) nascosta = Date.now();
+  if (document.hidden) { nascosta = Date.now(); spegniMicrofono(); }
   else if (nascosta && Date.now() - nascosta > 5 * 60_000) { state.data = null; if (state.tab !== "parla") carica(); }
 });
 
