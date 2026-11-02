@@ -331,7 +331,7 @@ function vistaOggi() {
   const prom = d.promemoria || [];
   app.innerHTML = `
     <h2 class="section">Promemoria e cose da fare</h2>
-    ${prom.length ? prom.map((r) => `<div class="card"><div class="meta">${r.quando ? `<span class="pill">${esc(quandoFuturo(r.quando))}</span>` : `<span class="pill">da fare</span>`}${r.ripeti ? `ogni ${esc(r.ripeti === "feriali" ? "giorno feriale" : r.ripeti)}` : ""}${r.avviso !== "telefono" ? ` · ${esc(r.avviso)}` : ""}</div><p class="title">${esc(r.testo)}</p><button class="btn secondary fatto" data-id="${r.id}">Fatto</button></div>`).join("") : `<div class="card muted">Niente in lista. Di' a Mark "ricordami alle 18 di…".</div>`}
+    ${prom.length ? prom.map((r) => `<div class="card"><div class="meta">${r.quando ? `<span class="pill">${esc(quandoFuturo(r.quando))}</span>` : `<span class="pill">da fare</span>`}${r.ripeti ? `ogni ${esc(r.ripeti === "feriali" ? "giorno feriale" : r.ripeti)}` : ""}${r.avviso !== "telefono" ? ` · ${esc(r.avviso)}` : ""}</div><p class="title">${esc(r.testo)}</p><button class="btn secondary fatto" data-id="${esc(r.id)}">Fatto</button></div>`).join("") : `<div class="card muted">Niente in lista. Di' a Mark "ricordami alle 18 di…".</div>`}
     <div id="notifiche"></div>
     <h2 class="section">Per te</h2>
     ${perMe.length ? perMe.map((m) => `<div class="card"><div class="meta"><span class="pill">${esc(m.da)}</span>${esc(quando(m.creato))}</div><p class="title">${esc(m.messaggio)}</p>${m.dettagli ? `<p class="body muted small">${linkify(m.dettagli)}</p>` : ""}<button class="btn secondary letto" data-id="${esc(m.id)}">Letto</button></div>`).join("") : `<div class="card muted">Nessun messaggio aperto per te.</div>`}
@@ -345,7 +345,7 @@ function vistaOggi() {
     b.onclick = async () => {
       b.disabled = true;
       try {
-        await api({ action: "promemoria_fatto", id: Number(b.dataset.id) });
+        await api({ action: "promemoria_fatto", id: b.dataset.id });
         state.data.promemoria = state.data.promemoria.filter((r) => String(r.id) !== b.dataset.id);
         vistaOggi();
       } catch (e) {
@@ -379,85 +379,19 @@ function quandoFuturo(iso) {
   return `${d.toLocaleDateString("it-IT", { weekday: "short", day: "numeric", month: "short" })} ${ora}`;
 }
 
-// ---------- notifiche sul telefono ----------
-
-const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const daB64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
-const installata = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
-
-async function registraSw() {
-  if (!("serviceWorker" in navigator)) return null;
-  try { return await navigator.serviceWorker.register("sw.js"); } catch { return null; }
-}
-
-async function iscrizioneAttuale() {
-  const reg = await registraSw();
-  return reg && "pushManager" in reg ? await reg.pushManager.getSubscription() : null;
-}
+// ---------- notifiche ----------
+// Da novembre 2026 le notifiche dei promemoria arrivano solo da Filo: qui si spegne la vecchia iscrizione di Mark.
 
 async function cartaNotifiche() {
   const box = $("#notifiche");
   if (!box) return;
-  const card = (html) => { box.innerHTML = `<div class="card small">${html}</div>`; };
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    card(installata() ? `<p class="muted">Questo browser non riceve notifiche.</p>` : `<p class="muted">Per ricevere i promemoria come notifica: in Safari tocca Condividi, poi "Aggiungi alla schermata Home", e apri Mark da lì.</p>`);
-    return;
-  }
-  if (!state.data?.notifiche) {
-    card(`<p><strong>Notifiche da attivare.</strong> Servono due chiavi da mettere su Supabase, una volta sola.</p><button class="btn secondary" id="genera-chiavi">Genera le chiavi</button>`);
-    $("#genera-chiavi").onclick = generaChiavi;
-    return;
-  }
-  const sub = await iscrizioneAttuale();
-  if (sub && Notification.permission === "granted") {
-    card(`<p class="muted">Notifiche attive su questo telefono.</p><button class="btn secondary" id="prova-notifica">Manda una prova</button> <span id="esito-notifica" class="muted"></span>`);
-    $("#prova-notifica").onclick = async (e) => {
-      e.target.disabled = true;
-      try { $("#esito-notifica").textContent = (await api({ action: "push_prova" })).esito; } catch (err) { $("#esito-notifica").textContent = err.message; }
-      e.target.disabled = false;
-    };
-    return;
-  }
-  card(`<p>Vuoi i promemoria come notifica su questo telefono?</p><button class="btn" id="attiva-notifiche">Attiva notifiche</button> <span id="esito-notifica" class="error small"></span>`);
-  $("#attiva-notifiche").onclick = attivaNotifiche;
-}
-
-async function attivaNotifiche() {
-  const esito = $("#esito-notifica");
+  box.innerHTML = `<div class="card muted small">Promemoria e notifiche stanno in Filo: quelli che crei qui li ritrovi lì, e la notifica arriva da Filo.</div>`;
   try {
-    if ((await Notification.requestPermission()) !== "granted") throw new Error("Permesso negato: riattivalo in Impostazioni > Notifiche > Mark.");
-    const { chiave } = await api({ action: "push_chiave" });
-    if (!chiave) throw new Error("Manca la chiave pubblica su Supabase.");
-    const reg = await registraSw();
-    await navigator.serviceWorker.ready;
-    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: daB64url(chiave) });
-    await api({ action: "push_iscrivi", iscrizione: sub.toJSON(), dispositivo: navigator.userAgent.slice(0, 150) });
-    await api({ action: "push_prova" });
-    cartaNotifiche();
-  } catch (e) {
-    if (esito) esito.textContent = e.message;
-  }
+    const reg = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    const sub = reg && "pushManager" in reg ? await reg.pushManager.getSubscription() : null;
+    if (sub) await sub.unsubscribe();
+  } catch { /* niente da spegnere */ }
 }
-
-// Le chiavi nascono qui, nel tuo browser: non passano da nessun server finché non le incolli tu su Supabase
-async function generaChiavi() {
-  const k = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
-  const jwk = await crypto.subtle.exportKey("jwk", k.privateKey);
-  const pub = b64url(new Uint8Array([4, ...daB64url(jwk.x), ...daB64url(jwk.y)]));
-  const riga = (nome, valore) => `<label class="field"><span>${nome}</span><textarea readonly rows="2" onclick="this.select()">${valore}</textarea></label><button class="btn secondary copia" data-v="${valore}" style="margin-bottom:12px">Copia</button>`;
-  apriSheet("Chiavi per le notifiche", `
-    <p class="small">Fallo dal PC, una volta sola. Su Supabase apri il progetto <strong>menu-famiglia</strong> → <strong>Edge Functions</strong> → <strong>Secrets</strong> → <strong>Add new secret</strong>, e crea questi due secret con nome e valore esatti:</p>
-    ${riga("MARK_VAPID_PUBLIC", pub)}
-    ${riga("MARK_VAPID_PRIVATE", jwk.d)}
-    <p class="muted small">Poi apri Mark sull'iPhone dalla schermata Home, scheda Oggi, e tocca "Attiva notifiche". Se chiudi questa finestra prima di salvarle, generane di nuove.</p>`);
-  document.querySelectorAll(".copia").forEach((b) => {
-    b.onclick = async () => {
-      try { await navigator.clipboard.writeText(b.dataset.v); b.textContent = "Copiata"; } catch { b.textContent = "Seleziona e copia a mano"; }
-    };
-  });
-}
-
-registraSw();
 
 function vistaBacheca() {
   const d = state.data;
