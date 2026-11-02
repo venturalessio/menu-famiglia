@@ -17,6 +17,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 SUPABASE_URL = "https://eameewqpwdanexplsbcp.supabase.co"
 # Chiave pubblica "anon": è la stessa che sta nella web-app.
@@ -115,6 +117,18 @@ def in_chiaro(testo):
 
 # ---------- Mark (funzione Supabase) ----------
 
+def chiama_funzione(chiave, dati, timeout=180):
+    corpo = json.dumps(dati).encode()
+    req = urllib.request.Request(FN_URL, data=corpo, headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {SUPABASE_ANON}",
+        "apikey": SUPABASE_ANON,
+        "x-mark-key": chiave,
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
 def chiedi_a_mark(chiave, messaggi):
     corpo = json.dumps({"action": "chat", "messages": messaggi}).encode()
     req = urllib.request.Request(FN_URL, data=corpo, headers={
@@ -164,16 +178,29 @@ class Memoria:
 
     def __init__(self):
         self.voci = []  # (istante, ruolo, testo)
+        self.lock = threading.Lock()
 
     def storia(self):
+        with self.lock:
+            return self._storia()
+
+    def _storia(self):
         limite = time.time() - MEMORIA_SECONDI
         self.voci = [v for v in self.voci if v[0] >= limite][-MAX_MESSAGGI:]
-        while self.voci and self.voci[0][1] != "user":
-            self.voci.pop(0)
-        return [{"role": r, "content": t} for _, r, t in self.voci]
+        storia = []
+        for _, ruolo, testo in self.voci:
+            if storia and storia[-1]["role"] == ruolo:
+                storia[-1]["content"] += "\n\n" + testo  # avvisi di fila diventano un messaggio
+            else:
+                storia.append({"role": ruolo, "content": testo})
+        # La conversazione deve iniziare da Alessio: se inizia da un avviso lo si dice
+        if storia and storia[0]["role"] != "user":
+            storia.insert(0, {"role": "user", "content": "(Mark mi ha mandato questi avvisi automatici)"})
+        return storia
 
     def aggiungi(self, ruolo, testo):
-        self.voci.append((time.time(), ruolo, testo))
+        with self.lock:
+            self.voci.append((time.time(), ruolo, testo))
 
     def azzera(self):
         self.voci = []
@@ -236,6 +263,12 @@ def gestisci(tg, chiave, codice, memoria, msg):
     if chat_id != abbinata:
         return  # chiunque altro viene ignorato
 
+    if testo in ("/avvisi_off", "/avvisi_on"):
+        avvisi_attivi(testo == "/avvisi_on")
+        tg.scrivi(chat_id, "Avvisi riattivati." if testo == "/avvisi_on"
+                  else "Avvisi in pausa. Li riattivi con /avvisi_on.")
+        return
+
     if testo in ("/nuova", "/start"):
         memoria.azzera()
         tg.scrivi(chat_id, "Fatto, ricominciamo da capo.")
@@ -270,6 +303,51 @@ def gestisci(tg, chiave, codice, memoria, msg):
     tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
 
 
+# ---------- Avvisi da evento ----------
+
+ROMA = ZoneInfo("Europe/Rome")
+FILE_PAUSA = os.path.join(STATO, "avvisi_off")
+OGNI_SECONDI = 10 * 60
+ORA_INIZIO, ORA_FINE = 7, 22  # di notte niente avvisi: arrivano al mattino
+
+
+def avvisi_attivi(valore=None):
+    if valore is None:
+        return not os.path.exists(FILE_PAUSA)
+    os.makedirs(STATO, exist_ok=True)
+    if valore:
+        if os.path.exists(FILE_PAUSA):
+            os.remove(FILE_PAUSA)
+    else:
+        open(FILE_PAUSA, "w").close()
+    return valore
+
+
+def giro_sentinella(tg, chiave, memoria):
+    chat_id = chat_abbinata()
+    if chat_id is None or not avvisi_attivi():
+        return
+    if not ORA_INIZIO <= datetime.now(ROMA).hour < ORA_FINE:
+        return
+    esito = chiama_funzione(chiave, {"action": "sentinella"}, timeout=120)
+    if esito.get("problemi"):
+        log("sentinella", esito["problemi"])
+    for avviso in esito.get("avvisi") or []:
+        testo = f"🔔 {avviso}"
+        memoria.aggiungi("assistant", testo)
+        tg.scrivi(chat_id, in_chiaro(testo))
+
+
+def sentinella(tg, chiave, memoria):
+    time.sleep(30)
+    while True:
+        try:
+            giro_sentinella(tg, chiave, memoria)
+        except Exception as e:
+            log("sentinella", repr(e))
+        time.sleep(OGNI_SECONDI)
+
+
 def main():
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     chiave = os.environ.get("MARK_ACCESS_KEY", "").strip()
@@ -280,6 +358,7 @@ def main():
     tg = Telegram(token)
     memoria = Memoria()
     offset = None
+    threading.Thread(target=sentinella, args=(tg, chiave, memoria), daemon=True).start()
     log("Mark su Telegram è partito", "(chat abbinata)" if chat_abbinata() else "(in attesa di abbinamento)")
     while True:
         try:
