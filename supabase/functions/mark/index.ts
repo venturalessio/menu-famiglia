@@ -1537,7 +1537,7 @@ async function fotografiaGiorni(): Promise<string[]> {
   return [...new Set(righe)];
 }
 
-// Risposte del Pensatore arrivate in Bacheca dopo l'ultimo giro (lavori lunghi chiesti anche da Telegram).
+// Risposte del Pensatore e avvisi della Sentinella lavoro arrivati in Bacheca dopo l'ultimo giro.
 // Su Telegram va solo il titolo: il testo resta in Bacheca e Mark lo riassume se Alessio lo chiede.
 async function risposteNuove(): Promise<{ avvisi: string[]; stato: { ultimo: string; visti: string[] } }> {
   const prima = await statoSentinella("pensatore");
@@ -1548,17 +1548,30 @@ async function risposteNuove(): Promise<{ avvisi: string[]; stato: { ultimo: str
   const data = await notion(`data_sources/${BACHECA}/query`, "POST", {
     page_size: 10,
     filter: {
-      and: [
-        { property: "Da", select: { equals: "Pensatore" } },
-        { timestamp: "created_time", created_time: { on_or_after: prima.ultimo } },
-        // Le note del Pensatore per gli altri agenti non sono per Alessio: niente avviso
-        ...AGENTI.map((n) => ({ property: "A", select: { does_not_equal: n } })),
+      or: [
+        {
+          and: [
+            { property: "Da", select: { equals: "Pensatore" } },
+            { timestamp: "created_time", created_time: { on_or_after: prima.ultimo } },
+            // Le note del Pensatore per gli altri agenti non sono per Alessio: niente avviso
+            ...AGENTI.map((n) => ({ property: "A", select: { does_not_equal: n } })),
+          ],
+        },
+        {
+          // Avvisi della Sentinella lavoro (attività M365): già brevi e senza dati dei clienti, passano così come sono
+          and: [
+            { property: "Da", select: { equals: "Sentinella lavoro" } },
+            { timestamp: "created_time", created_time: { on_or_after: prima.ultimo } },
+          ],
+        },
       ],
     },
     sorts: [{ timestamp: "created_time", direction: "ascending" }],
   });
   const nuove = (data.results as any[]).filter((r) => !visti.has(r.id));
-  const avvisi = nuove.map((r) => `Il Pensatore ha risposto: ${prop(r, "Messaggio").slice(0, 200)}. Scrivimi "leggimela" e te la riassumo.`);
+  const avvisi = nuove.map((r) => prop(r, "Da") === "Sentinella lavoro"
+    ? prop(r, "Messaggio").slice(0, 300)
+    : `Il Pensatore ha risposto: ${prop(r, "Messaggio").slice(0, 200)}. Scrivimi "leggimela" e te la riassumo.`);
   // Notion arrotonda l'ora di creazione al minuto: si tengono gli id già visti dell'ultimo minuto
   const ultimo = nuove.length ? nuove[nuove.length - 1].created_time : prima.ultimo;
   const tutti = [...(data.results as any[])].filter((r) => r.created_time >= ultimo).map((r) => r.id);
