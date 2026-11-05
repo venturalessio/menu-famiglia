@@ -220,18 +220,90 @@ async function riboWeek(schoolName: string, dates: string[]) {
 }
 
 // ---------- Ricetta da un link ----------
+// Solo pagine pubbliche http/https: niente indirizzi interni (127.x, 10.x, 192.168.x, 169.254.x, ::1...)
+export function indirizzoPubblico(u: URL) {
+  if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+  if (u.username || u.password) return false;
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h.includes(".") && !h.includes(":")) return false;
+  if (/(^|\.)(localhost|local|internal|localdomain)$/.test(h)) return false;
+  if (h.includes(":")) return false; // indirizzi IPv6 scritti a mano: le ricette stanno su nomi di dominio
+  const ip = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (ip) {
+    const [a, b] = [Number(ip[1]), Number(ip[2])];
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+  }
+  if (/^\d+$/.test(h) || /^0x/.test(h)) return false; // IP scritti come numero unico
+  return true;
+}
+
 async function pageText(url: string) {
-  const u = new URL(url);
+  let u = new URL(url);
   if (/instagram\.com|tiktok\.com|facebook\.com/.test(u.hostname)) {
     throw new Error("I social non si aprono da qui: copia e incolla il testo della ricetta.");
   }
-  const r = await fetch(u, { headers: { "User-Agent": "Mozilla/5.0 (menu-famiglia)", "Accept-Language": "it-IT,it" }, signal: AbortSignal.timeout(20_000) });
+  // I redirect si seguono a mano, controllando ogni indirizzo
+  let r: Response | null = null;
+  for (let salto = 0; salto < 4; salto++) {
+    if (!indirizzoPubblico(u)) throw new Error("Questo indirizzo non si può aprire.");
+    r = await fetch(u, { redirect: "manual", headers: { "User-Agent": "Mozilla/5.0 (menu-famiglia)", "Accept-Language": "it-IT,it" }, signal: AbortSignal.timeout(20_000) });
+    const dove = r.status >= 300 && r.status < 400 ? r.headers.get("location") : null;
+    if (!dove) break;
+    await r.body?.cancel();
+    u = new URL(dove, u);
+    r = null;
+  }
+  if (!r) throw new Error("La pagina rimanda troppe volte altrove.");
   if (!r.ok) throw new Error(`La pagina non si apre (${r.status}).`);
-  const h = await r.text();
+  // Al massimo 2 MB di pagina
+  const reader = r.body?.getReader();
+  const parti: Uint8Array[] = [];
+  let letti = 0;
+  while (reader) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parti.push(value);
+    letti += value.length;
+    if (letti > 2_000_000) { await reader.cancel(); break; }
+  }
+  const h = new TextDecoder().decode(await new Blob(parti).arrayBuffer());
   // Prima i dati strutturati (quasi tutti i siti di ricette li hanno), poi il testo
   const ld = [...h.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]).filter((x) => /Recipe/.test(x));
   const text = h.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ");
   return (ld.join("\n") + "\n" + decode(text)).slice(0, 30000);
+}
+
+async function controllaAccesso(authorization: string): Promise<{ status: number; error: string } | null> {
+  const token = authorization.replace(/^Bearer\s+/i, "").trim();
+  if (!token) return { status: 401, error: "Accesso richiesto" };
+  const servizio = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (servizio && token === servizio) return null;
+  const url = Deno.env.get("SUPABASE_URL");
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const headers = { apikey: anon, Authorization: `Bearer ${token}` };
+  const u = await fetch(`${url}/auth/v1/user`, { headers, signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  if (!u?.ok) return { status: 401, error: "Accesso richiesto" };
+  // Le regole del database fanno vedere a ciascuno solo le proprie famiglie
+  const m = await fetch(`${url}/rest/v1/household_members?select=household_id&limit=1`, { headers, signal: AbortSignal.timeout(10_000) }).catch(() => null);
+  const righe = m?.ok ? await m.json().catch(() => []) : [];
+  if (!Array.isArray(righe) || !righe.length) return { status: 403, error: "Serve far parte di una famiglia" };
+  return null;
+}
+
+// Liste e testi con una misura massima, così una richiesta non può gonfiare il prompt
+export function limitaCampi(b: any) {
+  if (!b || typeof b !== "object") return {};
+  const testo = (x: any, n: number) => typeof x === "string" ? x.slice(0, n) : x;
+  for (const k of ["pantry", "favorites", "liked", "disliked", "recent", "leftovers", "weekTitles"]) {
+    if (b[k] !== undefined) b[k] = (Array.isArray(b[k]) ? b[k] : []).slice(0, 80).map((x: any) => testo(String(x ?? ""), 120));
+  }
+  for (const k of ["days", "current"]) if (Array.isArray(b[k])) b[k] = b[k].slice(0, 21);
+  for (const k of ["notes", "hint", "problems", "portions", "seasonVeg", "current", "school"]) b[k] = testo(b[k], 2000);
+  return b;
 }
 
 Deno.serve(async (req) => {
@@ -243,16 +315,25 @@ Deno.serve(async (req) => {
     return json({ error: "Manca la chiave ANTHROPIC_API_KEY nei secret di Supabase." }, 500);
   }
 
+  // Solo chi fa parte di una famiglia del Menù (o Mark, con la chiave di servizio): la chiave pubblica dell'app non basta
+  const accesso = await controllaAccesso(req.headers.get("Authorization") ?? "");
+  if (accesso) return json({ error: accesso.error }, accesso.status);
+
   let body: any;
   try {
-    body = await req.json();
+    const raw = await req.text();
+    if (raw.length > 100_000) return json({ error: "Richiesta troppo grande" }, 413);
+    body = limitaCampi(JSON.parse(raw));
   } catch {
     return json({ error: "Richiesta non valida" }, 400);
   }
 
   // Menù della mensa: niente AI, solo lettura del sito Ribò
   if (body.mode === "school") {
-    const schools: { name: string; school: string }[] = (body.schools ?? []).filter((x: any) => x?.school);
+    // Al massimo 4 scuole diverse per richiesta
+    const schools: { name: string; school: string }[] = (Array.isArray(body.schools) ? body.schools : [])
+      .filter((x: any, i: number, a: any[]) => x?.school && a.findIndex((y: any) => y?.school === x.school && y?.name === x.name) === i)
+      .slice(0, 4);
     const dates: string[] = (body.dates ?? []).slice(0, 7);
     if (!schools.length || !dates.length) return json({ error: "Mancano scuole o date." }, 400);
     const result: Record<string, unknown> = {};
