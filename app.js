@@ -59,6 +59,11 @@ const S = {
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+// Numeri (minuti, porzioni) mostrati solo come numeri: un valore scritto a mano nel database non diventa HTML
+function num(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? n : 0;
+}
 function iso(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
@@ -716,7 +721,7 @@ function planningHtml() {
       const att = attendanceFor(date);
       return `<div class="card">
         <div class="row between"><h3>${dayLabel(date)}</h3>
-          <button class="chip ${att.dinnerOut ? "on" : ""}" data-dout="${date}">${att.dinnerOut ? "Cena fuori ✓" : "Cena fuori?"}</button>
+          <button class="chip ${att.dinnerOut ? "on" : ""}" data-dout="${esc(date)}">${att.dinnerOut ? "Cena fuori ✓" : "Cena fuori?"}</button>
         </div>
         ${schoolLine(date)}
         ${st.schedule?.[parseIso(date).getDay()] ? `<div class="muted small">🌙 ${esc(st.schedule[parseIso(date).getDay()])}</div>` : ""}
@@ -724,7 +729,7 @@ function planningHtml() {
           st.adults.map((name, i) => `
             <div class="row between" style="margin-top:8px">
               <span>${esc(name)}</span>
-              <div class="seg">${LUNCH_MODES.map((m) => `<button data-att="${date}|${i}|${m.id}" class="${att.lunch[i] === m.id ? "on" : ""}">${m.label}</button>`).join("")}</div>
+              <div class="seg">${LUNCH_MODES.map((m) => `<button data-att="${esc(date)}|${esc(i)}|${esc(m.id)}" class="${att.lunch[i] === m.id ? "on" : ""}">${m.label}</button>`).join("")}</div>
             </div>`).join("")}
       </div>`;
     }).join("")}
@@ -765,12 +770,12 @@ function mealRow(date, slot, m, extra = "") {
   if (!m) return "";
   const label = slot === "lunch" ? "Pranzo" : slot === "sick" ? "Pranzo di riserva" : "Cena";
   if (m.takeaway) {
-    return `<div class="meal" data-meal="${date}|${slot}">
+    return `<div class="meal" data-meal="${esc(date)}|${esc(slot)}">
       <div class="label">${label}</div>
       <div class="title">🍕 ${esc(m.title)}</div>${extra}</div>`;
   }
-  return `<div class="meal" data-meal="${date}|${slot}">
-    <div class="label">${label} · ${m.minutes} min · ${m.servings} porz.${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? "" : " · senza verdura"}` : ""}</div>
+  return `<div class="meal" data-meal="${esc(date)}|${esc(slot)}">
+    <div class="label">${label} · ${num(m.minutes)} min · ${num(m.servings)} porz.${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? "" : " · senza verdura"}` : ""}</div>
     <div class="title">${esc(m.title)}</div>
     ${m.note ? `<div class="note">${esc(m.note)}</div>` : ""}${extra}
   </div>`;
@@ -779,7 +784,7 @@ function mealRow(date, slot, m, extra = "") {
 function dayCardHtml(d, withSick = false) {
   const l = lunchSummary(d.date);
   const sickBtn = withSick && !d.sick && !isWeekend(d.date) && d.date >= iso(new Date())
-    ? `<button class="chip" data-sick="${d.date}">🤒 Bimba a casa</button>` : "";
+    ? `<button class="chip" data-sick="${esc(d.date)}">🤒 Bimba a casa</button>` : "";
   return `<div class="card">
     <div class="row between"><h3>${dayLabel(d.date)}</h3>
       ${d.sick ? `<span class="badge warn">Bimba a casa</span>` : sickBtn}</div>
@@ -846,7 +851,7 @@ function openMeal(date, slot) {
     <p class="muted small">${dayLabel(date)}${date === today ? " · oggi" : ""}</p>
     <h2 style="margin-top:0">${esc(m.title)}</h2>
     ${m.takeaway ? `<p>Serata libera. Il piatto previsto è stato spostato al giorno dopo.</p>` : `
-      <p class="muted">${m.minutes} minuti · ${m.servings} porzioni${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? " · con verdura" : " · senza verdura"}${m.tags.integrale ? " · integrale" : ""}` : ""}</p>
+      <p class="muted">${num(m.minutes)} minuti · ${num(m.servings)} porzioni${m.tags ? ` · ${esc(N.PROTEIN_LABEL[m.tags.protein] || "")}${m.tags.verdura ? " · con verdura" : " · senza verdura"}${m.tags.integrale ? " · integrale" : ""}` : ""}</p>
       ${m.note ? `<p class="badge warn">${esc(m.note)}</p>` : ""}
       ${slot === "dinner" && schoolText(date) ? `<p class="muted small">A pranzo a scuola: ${esc(schoolText(date))}</p>` : ""}
       ${date <= today ? `<div class="vote"><span class="small">Alle bimbe è piaciuto?</span>
@@ -980,7 +985,7 @@ async function sickDay(date) {
       <h2 style="margin-top:0">Bimba a casa · ${dayLabel(date)}</h2>
       <p class="muted small">Pranzi veloci con quello che tenete sempre in dispensa.</p>
       ${reserve.map((m, i) => `<div class="card tap" data-pick="${i}"><h3>${esc(m.title)}</h3>
-        <div class="muted small">${m.minutes} min · ${(m.ingredients || []).map((x) => esc(x.name)).join(", ")}</div></div>`).join("")}
+        <div class="muted small">${num(m.minutes)} min · ${(m.ingredients || []).map((x) => esc(x.name)).join(", ")}</div></div>`).join("")}
       <div class="actions"><button class="ghost" data-close>Annulla</button></div>`, (root) => {
       root.querySelectorAll("[data-pick]").forEach((el) => (el.onclick = async () => {
         const m = reserve[+el.dataset.pick];
@@ -1202,7 +1207,7 @@ function renderRecipes() {
   const others = S.recipes.filter((r) => !r.favorite).slice(0, 40);
   const row = (r) => `<div class="card tap" data-recipe="${esc(r.id)}">
     <div class="row between"><b class="grow">${esc(r.title)}</b>${r.favorite ? "★" : ""}</div>
-    <div class="muted small">${r.data?.minutes ? `${r.data.minutes} min · ` : ""}${r.last_used ? `ultima volta ${esc(r.last_used.split("-").reverse().join("/"))}` : ""}${voteText(r)}</div></div>`;
+    <div class="muted small">${r.data?.minutes ? `${num(r.data.minutes)} min · ` : ""}${r.last_used ? `ultima volta ${esc(r.last_used.split("-").reverse().join("/"))}` : ""}${voteText(r)}</div></div>`;
   app().innerHTML = `
     <div class="actions"><button class="secondary block" id="import">＋ Aggiungi una ricetta da un link o da un testo</button></div>
     <h2>Preferiti</h2>
@@ -1215,7 +1220,7 @@ function renderRecipes() {
     const m = r.data || {};
     openSheet(`
       <h2 style="margin-top:0">${esc(r.title)}</h2>
-      ${m.minutes ? `<p class="muted">${m.minutes} minuti · ${m.servings} porzioni</p>` : ""}
+      ${m.minutes ? `<p class="muted">${num(m.minutes)} minuti · ${num(m.servings)} porzioni</p>` : ""}
       <h3>Ingredienti</h3><ul>${(m.ingredients || []).map((i) => `<li>${esc(i.name)} <span class="muted">${esc(fmtQty(i.qty, i.unit))}</span></li>`).join("")}</ul>
       <h3>Come si fa</h3><ol>${(m.steps || []).map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
       <div class="actions"><button class="secondary block" id="fav">${r.favorite ? "Togli dai preferiti" : "Salva tra i preferiti"}</button>
