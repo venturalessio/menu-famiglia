@@ -1597,13 +1597,50 @@ function allegatiValidi(lista: unknown) {
   });
 }
 
-async function chat(messages: { role: string; content: string }[], allegati?: unknown, canale?: unknown) {
-  try {
-    return json(await rispondi(pulisci(messages), { allegati: allegatiValidi(allegati), canale: canale === "Telegram" ? "Telegram" : undefined }));
-  } catch (err) {
-    if (err instanceof ChatError) return json({ error: err.message }, err.status);
-    throw err;
+// Cosa sta facendo Mark, in una riga: su Telegram sostituisce "Ci sto pensando…" mentre lavora
+function cosaFaccio(nome: string, input: any) {
+  switch (nome) {
+    case "posta_cerca": return "Cerco nella tua Gmail…";
+    case "posta_leggi": return "Leggo la mail…";
+    case "controllo_dominio": return `Controllo DNS e sito di ${String(input?.dominio ?? "il dominio").slice(0, 60)}… (ci vuole qualche secondo)`;
+    case "web_search": return "Cerco online…";
+    case "web_fetch": return "Apro la pagina…";
+    case "agenda": case "calendario": return "Guardo l'agenda…";
+    case "menu": return "Guardo il menù…";
+    case "lavori_recenti": return "Guardo i lavori degli ultimi giorni…";
+    case "chiedi_al_pensatore": return "Passo la domanda al Pensatore…";
+    case "scrivi_in_bacheca": case "manda_link": case "ricorda": return "Scrivo in Notion…";
+    case "promemoria_crea": case "promemoria_elenco": case "promemoria_chiudi": return "Sistemo i promemoria…";
+    case "casa_dispositivi": case "casa_comanda": case "alexa_dispositivi": case "alexa_routine": case "alexa_annuncio": return "Parlo con la casa…";
+    default: return "Ci lavoro…";
   }
+}
+
+async function chat(messages: { role: string; content: string }[], allegati?: unknown, canale?: unknown, progressi = false) {
+  const opzioni = { allegati: allegatiValidi(allegati), canale: canale === "Telegram" ? "Telegram" : undefined };
+  if (!progressi) {
+    try {
+      return json(await rispondi(pulisci(messages), opzioni));
+    } catch (err) {
+      if (err instanceof ChatError) return json({ error: err.message }, err.status);
+      throw err;
+    }
+  }
+  // Con progressi: una riga JSON per ogni passo ({"stato": ...}) e l'ultima con la risposta
+  const codifica = new TextEncoder();
+  const flusso = new ReadableStream({
+    async start(ctrl) {
+      const riga = (o: unknown) => ctrl.enqueue(codifica.encode(JSON.stringify(o) + "\n"));
+      try {
+        riga(await rispondi(pulisci(messages), { ...opzioni, onStato: (t: string) => riga({ stato: t }) }));
+      } catch (err) {
+        console.error("chat", String((err as any)?.message ?? err).slice(0, 300));
+        riga({ error: err instanceof ChatError || err instanceof NotionError ? (err as Error).message : "Si è inceppato qualcosa, riprova tra poco." });
+      }
+      ctrl.close();
+    },
+  });
+  return new Response(flusso, { headers: { ...cors, "Content-Type": "application/x-ndjson" } });
 }
 
 // Siri: la conversazione resta in memoria per 15 minuti nella tabella mark_siri
@@ -1666,7 +1703,7 @@ async function siri(testoRaw: unknown) {
   return json({ ...r, continua: r.risposta.trim().endsWith("?") });
 }
 
-async function rispondi(history: { role: string; content: string }[], opzioni: { siri?: boolean; allegati?: any[]; canale?: string } = {}) {
+async function rispondi(history: { role: string; content: string }[], opzioni: { siri?: boolean; allegati?: any[]; canale?: string; onStato?: (t: string) => void } = {}) {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new ChatError(500, "Manca la chiave Anthropic su Supabase.");
   if (!history.length || history[history.length - 1].role !== "user") {
@@ -1715,6 +1752,10 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
     } as any);
 
     for (const b of response.content ?? []) if (b.type === "server_tool_use" || b.type === "tool_use") strumenti.push(b.name);
+    if (response.stop_reason === "tool_use" || response.stop_reason === "pause_turn") {
+      const ultimo = [...(response.content ?? [])].reverse().find((b: any) => b.type === "tool_use" || b.type === "server_tool_use");
+      if (ultimo) opzioni.onStato?.(cosaFaccio(ultimo.name, ultimo.input));
+    }
     if ((response.content ?? []).some((b: any) => b.type === "server_tool_use" && FONTI_ESTERNE.includes(b.name))) letturaEsterna = true;
     const u = response.usage ?? {};
     console.log("mark usage", canale, giro, u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens);
@@ -2059,7 +2100,7 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       case "chat":
-        return await chat(body.messages ?? [], body.allegati, body.canale);
+        return await chat(body.messages ?? [], body.allegati, body.canale, body.progressi === true);
       case "letto": {
         if (typeof body.id !== "string" || !/^[0-9a-f-]{32,36}$/i.test(body.id)) return json({ error: "Messaggio non valido" }, 400);
         await segnaLetto(body.id);
