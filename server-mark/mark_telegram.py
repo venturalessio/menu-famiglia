@@ -2,12 +2,13 @@
 """Mark su Telegram.
 
 Gira sul server Hetzner di Mark. Riceve i messaggi del bot Telegram,
-trascrive le note vocali sul server (faster-whisper) e passa il testo
+trascrive le note vocali sul server (faster-whisper), passa foto, screenshot e PDF e il testo
 alla funzione `mark` su Supabase, la stessa della web-app.
 
 Risponde solo alla chat abbinata con la parola di abbinamento.
 Le chiavi stanno in /etc/mark/mark.env (leggibile solo da root e da mark).
 """
+import base64
 import json
 import os
 import re
@@ -129,29 +130,58 @@ def chiama_funzione(chiave, dati, timeout=180):
         return json.load(r)
 
 
-def chiedi_a_mark(chiave, messaggi):
-    corpo = json.dumps({"action": "chat", "messages": messaggi}).encode()
-    req = urllib.request.Request(FN_URL, data=corpo, headers={
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {SUPABASE_ANON}",
-        "apikey": SUPABASE_ANON,
-        "x-mark-key": chiave,
-    })
-    try:
-        with urllib.request.urlopen(req, timeout=180) as r:
-            dati = json.load(r)
-    except urllib.error.HTTPError as e:
+def chiedi_a_mark(chiave, messaggi, allegati=None):
+    richiesta = {"action": "chat", "messages": messaggi, "canale": "Telegram"}
+    if allegati:
+        richiesta["allegati"] = allegati
+    corpo = json.dumps(richiesta).encode()
+    for tentativo in range(2):
+        req = urllib.request.Request(FN_URL, data=corpo, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {SUPABASE_ANON}",
+            "apikey": SUPABASE_ANON,
+            "x-mark-key": chiave,
+        })
         try:
-            dati = json.load(e)
-        except Exception:
-            dati = {}
-        if e.code == 401:
-            return "La chiave di Mark sul server non è giusta: va corretta in /etc/mark/mark.env."
-        return dati.get("error") or f"Mark non ha risposto (errore {e.code}), riprova tra poco."
-    except Exception as e:
-        log("mark", repr(e))
-        return "Non riesco a raggiungere Mark in questo momento, riprova tra poco."
+            with urllib.request.urlopen(req, timeout=180) as r:
+                dati = json.load(r)
+            break
+        except urllib.error.HTTPError as e:
+            try:
+                dati = json.load(e)
+            except Exception:
+                dati = {}
+            if e.code == 401:
+                return "La chiave di Mark sul server non è giusta: va corretta in /etc/mark/mark.env."
+            # 502/503/504: la funzione è caduta o non ha fatto in tempo, si riprova una volta da soli
+            if e.code in (502, 503, 504) and tentativo == 0:
+                log("mark", f"errore {e.code}, riprovo")
+                time.sleep(4)
+                continue
+            return dati.get("error") or f"Mark non ha risposto (errore {e.code}) anche al secondo tentativo, riprova tra qualche minuto."
+        except Exception as e:
+            log("mark", repr(e))
+            return "Non riesco a raggiungere Mark in questo momento, riprova tra poco."
     return dati.get("risposta") or dati.get("error") or "Mark non ha risposto, riprova tra poco."
+
+
+# ---------- Foto, screenshot e PDF ----------
+
+TIPI_FILE = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
+MAX_BYTE_FILE = 8 * 1024 * 1024
+MAX_BYTE_IMMAGINE = 5 * 1000 * 1000  # limite di Claude per un'immagine
+
+
+def allegato_del_messaggio(msg):
+    """(file_id, tipo, nome) della foto o del documento nel messaggio, oppure None."""
+    foto = msg.get("photo")
+    if foto:
+        grande = max(foto, key=lambda f: f.get("file_size") or f.get("width", 0) * f.get("height", 0))
+        return grande["file_id"], "image/jpeg", "foto", grande.get("file_size") or 0
+    doc = msg.get("document")
+    if doc:
+        return doc["file_id"], (doc.get("mime_type") or "").lower(), doc.get("file_name") or "documento", doc.get("file_size") or 0
+    return None
 
 
 # ---------- Note vocali ----------
@@ -291,14 +321,47 @@ def gestisci(tg, chiave, codice, memoria, msg):
             return
         tg.scrivi(chat_id, f"Ho capito: «{testo}»", al_posto_di=ascolto)
 
+    allegati = []
+    file = allegato_del_messaggio(msg)
+    if file:
+        file_id, tipo, nome, peso = file
+        if tipo not in TIPI_FILE:
+            tg.scrivi(chat_id, "Leggo testo, note vocali, foto, screenshot e PDF. Questo tipo di file ancora no.")
+            return
+        if tipo != "application/pdf":
+            limite = MAX_BYTE_IMMAGINE
+        else:
+            limite = MAX_BYTE_FILE
+        if peso > limite:
+            tg.scrivi(chat_id, "Il file è troppo grande. Mandami uno screenshot della parte che conta, oppure la foto normale invece del file.")
+            return
+        with tempfile.TemporaryDirectory() as cartella:
+            percorso = os.path.join(cartella, "allegato")
+            try:
+                tg.scarica(file_id, percorso)
+                with open(percorso, "rb") as f:
+                    dati = f.read()
+            except Exception as e:
+                log("allegato", repr(e))
+                tg.scrivi(chat_id, "Non sono riuscito a scaricare il file, riprova.")
+                return
+        if len(dati) > limite:
+            tg.scrivi(chat_id, "Il file è troppo grande. Mandami uno screenshot della parte che conta, oppure la foto normale invece del file.")
+            return
+        allegati.append({"tipo": tipo, "dati": base64.b64encode(dati).decode()})
+        didascalia = (msg.get("caption") or "").strip()
+        testo = f"[Ti ho mandato {'un PDF' if tipo == 'application/pdf' else 'una foto o uno screenshot'}: {nome}] " + (
+            didascalia or "Guardalo e dimmi cosa c'è e cosa devo fare."
+        )
+
     if not testo:
-        tg.scrivi(chat_id, "Per ora leggo testo e note vocali.")
+        tg.scrivi(chat_id, "Leggo testo, note vocali, foto, screenshot e PDF. Questo messaggio non lo so leggere.")
         return
 
     memoria.aggiungi("user", testo)
     attesa = tg.segnaposto(chat_id)
     with StaScrivendo(tg, chat_id):
-        risposta = chiedi_a_mark(chiave, memoria.storia())
+        risposta = chiedi_a_mark(chiave, memoria.storia(), allegati)
     memoria.aggiungi("assistant", risposta)
     tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
 
