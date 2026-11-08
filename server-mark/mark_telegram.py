@@ -8,11 +8,14 @@ alla funzione `mark` su Supabase, la stessa della web-app.
 Risponde solo alla chat abbinata con la parola di abbinamento.
 Le chiavi stanno in /etc/mark/mark.env (leggibile solo da root e da mark).
 """
+import asyncio
 import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import uuid
 import tempfile
 import threading
 import time
@@ -80,6 +83,25 @@ class Telegram:
             self.chiama("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": testo}, timeout=10)
         except Exception as e:
             log("aggiorna", repr(e))
+
+    def manda_voce(self, chat_id, percorso):
+        """Manda un file OGG/Opus come nota vocale (multipart)."""
+        confine = uuid.uuid4().hex
+        with open(percorso, "rb") as f:
+            audio = f.read()
+        corpo = (
+            f"--{confine}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id}\r\n"
+            f"--{confine}\r\nContent-Disposition: form-data; name=\"voice\"; filename=\"mark.ogg\"\r\n"
+            f"Content-Type: audio/ogg\r\n\r\n"
+        ).encode() + audio + f"\r\n--{confine}--\r\n".encode()
+        req = urllib.request.Request(
+            f"{self.base}/sendVoice", data=corpo,
+            headers={"Content-Type": f"multipart/form-data; boundary={confine}"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            risposta = json.load(r)
+        if not risposta.get("ok"):
+            raise RuntimeError(f"Telegram sendVoice: {risposta.get('description')}")
 
     def scrivi(self, chat_id, testo, al_posto_di=None):
         # Il segnaposto si cancella e la risposta arriva come messaggio nuovo,
@@ -190,6 +212,67 @@ def chiedi_a_mark(chiave, messaggi, allegati=None, on_stato=None):
     return dati.get("risposta") or dati.get("error") or "Mark non ha risposto, riprova tra poco."
 
 
+# ---------- Voce di Mark (risposte vocali) ----------
+# Voce neurale gratuita di Microsoft Edge (edge-tts, servizio non ufficiale): se non risponde, Mark scrive e basta.
+
+VOCE = os.environ.get("MARK_VOCE", "it-IT-DiegoNeural")
+FILE_VOCE = os.path.join(STATO, "voce")  # auto | sempre | mai
+MAX_CARATTERI_VOCE = 900
+
+
+def modo_voce(valore=None):
+    if valore is None:
+        try:
+            with open(FILE_VOCE) as f:
+                v = f.read().strip()
+            return v if v in ("auto", "sempre", "mai") else "auto"
+        except FileNotFoundError:
+            return "auto"
+    os.makedirs(STATO, exist_ok=True)
+    with open(FILE_VOCE, "w") as f:
+        f.write(valore)
+    return valore
+
+
+def da_leggere(testo):
+    """Testo adatto alla voce: niente link, simboli o elenchi lunghi."""
+    link = bool(re.search(r"https?://", testo))
+    t = re.sub(r"https?://\S+", "", testo)
+    t = re.sub(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+", "", t)
+    t = re.sub(r"[*_#`>•|]", " ", t)
+    t = re.sub(r"[^\w\s.,;:!?'’()€%°àèéìòùÀÈÉÌÒÙ-]", " ", t)
+    righe = [r.strip() for r in t.split("\n") if r.strip()]
+    t = " ".join(r if r[-1] in ".:;!?," else r + "." for r in righe)
+    t = re.sub(r"\s{2,}", " ", t).replace(" .", ".").strip()
+    if len(t) > MAX_CARATTERI_VOCE:
+        taglio = t.rfind(".", 0, MAX_CARATTERI_VOCE)
+        t = t[: taglio + 1 if taglio > 200 else MAX_CARATTERI_VOCE] + " Il resto è nel messaggio."
+    if link:
+        t += " Il link è nel messaggio."
+    return t
+
+
+def sintetizza(testo, cartella):
+    """Crea mark.ogg (Opus) dal testo. Ritorna il percorso o None."""
+    import edge_tts
+    mp3 = os.path.join(cartella, "mark.mp3")
+    ogg = os.path.join(cartella, "mark.ogg")
+    asyncio.run(edge_tts.Communicate(testo, VOCE, rate="-5%").save(mp3))
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", mp3, "-c:a", "libopus", "-b:a", "32k", ogg], check=True, timeout=60)
+    return ogg
+
+
+def rispondi_a_voce(tg, chat_id, testo):
+    parlato = da_leggere(testo)
+    if len(parlato) < 2:
+        return
+    try:
+        with tempfile.TemporaryDirectory() as cartella:
+            tg.manda_voce(chat_id, sintetizza(parlato, cartella))
+    except Exception as e:
+        log("voce", repr(e))
+
+
 # ---------- Foto, screenshot e PDF ----------
 
 TIPI_FILE = {"image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"}
@@ -279,8 +362,9 @@ def abbina(chat_id):
 class StaScrivendo:
     """Mostra "sta scrivendo…" finché Mark lavora."""
 
-    def __init__(self, tg, chat_id):
+    def __init__(self, tg, chat_id, azione="typing"):
         self.tg, self.chat_id, self.fine = tg, chat_id, threading.Event()
+        self.azione = azione
 
     def __enter__(self):
         threading.Thread(target=self._giro, daemon=True).start()
@@ -289,7 +373,7 @@ class StaScrivendo:
     def _giro(self):
         while not self.fine.is_set():
             try:
-                self.tg.chiama("sendChatAction", {"chat_id": self.chat_id, "action": "typing"}, timeout=10)
+                self.tg.chiama("sendChatAction", {"chat_id": self.chat_id, "action": self.azione}, timeout=10)
             except Exception:
                 pass
             self.fine.wait(4.5)
@@ -324,12 +408,22 @@ def gestisci(tg, chiave, codice, memoria, msg):
                   else "Avvisi in pausa. Li riattivi con /avvisi_on.")
         return
 
+    if testo in ("/voce_sempre", "/voce_auto", "/voce_mai"):
+        modo = modo_voce(testo.removeprefix("/voce_"))
+        tg.scrivi(chat_id, {
+            "sempre": "Da ora ti rispondo sempre anche a voce.",
+            "auto": "Ti rispondo a voce quando mi mandi una nota vocale.",
+            "mai": "Niente più risposte a voce, solo testo.",
+        }[modo])
+        return
+
     if testo in ("/nuova", "/start"):
         memoria.azzera()
         tg.scrivi(chat_id, "Fatto, ricominciamo da capo.")
         return
 
     voce = msg.get("voice") or msg.get("audio")
+    ha_parlato = bool(voce)
     if voce and not testo:
         ascolto = tg.segnaposto(chat_id, "Sto ascoltando la nota vocale…")
         with StaScrivendo(tg, chat_id), tempfile.TemporaryDirectory() as cartella:
@@ -392,6 +486,10 @@ def gestisci(tg, chiave, codice, memoria, msg):
         )
     memoria.aggiungi("assistant", risposta)
     tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
+    modo = modo_voce()
+    if modo == "sempre" or (modo == "auto" and ha_parlato):
+        with StaScrivendo(tg, chat_id, "record_voice"):
+            rispondi_a_voce(tg, chat_id, risposta)
 
 
 # ---------- Avvisi da evento ----------

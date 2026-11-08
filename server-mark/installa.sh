@@ -9,7 +9,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 apt-get update
 apt-get -y upgrade
-apt-get -y install python3-venv unattended-upgrades ufw curl
+apt-get -y install python3-venv unattended-upgrades ufw curl ffmpeg
 
 # Aggiornamenti di sicurezza automatici, riavvio alle 4:30 se serve
 cat > /etc/apt/apt.conf.d/20auto-upgrades <<'EOF'
@@ -43,7 +43,7 @@ mkdir -p /opt/mark
 curl -fsSL "${BASE}/mark_telegram.py" -o /opt/mark/mark_telegram.py
 chmod 0755 /opt/mark/mark_telegram.py
 python3 -m venv /opt/mark/venv
-/opt/mark/venv/bin/pip install --no-cache-dir faster-whisper==1.2.1 "av<16"
+/opt/mark/venv/bin/pip install --no-cache-dir faster-whisper==1.2.1 "av<16" edge-tts==7.2.3
 sudo -u mark env HF_HOME=/var/lib/mark/hf /opt/mark/venv/bin/python -c \
   "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 
