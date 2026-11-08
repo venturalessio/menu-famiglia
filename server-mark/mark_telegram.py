@@ -72,6 +72,15 @@ class Telegram:
             log("segnaposto", repr(e))
             return None
 
+    def aggiorna(self, chat_id, message_id, testo):
+        """Cambia il testo del segnaposto mentre Mark lavora."""
+        if not message_id:
+            return
+        try:
+            self.chiama("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": testo}, timeout=10)
+        except Exception as e:
+            log("aggiorna", repr(e))
+
     def scrivi(self, chat_id, testo, al_posto_di=None):
         # Il segnaposto si cancella e la risposta arriva come messaggio nuovo,
         # così la notifica sul telefono mostra la risposta vera.
@@ -130,8 +139,9 @@ def chiama_funzione(chiave, dati, timeout=180):
         return json.load(r)
 
 
-def chiedi_a_mark(chiave, messaggi, allegati=None):
-    richiesta = {"action": "chat", "messages": messaggi, "canale": "Telegram"}
+def chiedi_a_mark(chiave, messaggi, allegati=None, on_stato=None):
+    """Chiede a Mark. Con on_stato riceve i passi mentre lavora ("Leggo la mail…")."""
+    richiesta = {"action": "chat", "messages": messaggi, "canale": "Telegram", "progressi": True}
     if allegati:
         richiesta["allegati"] = allegati
     corpo = json.dumps(richiesta).encode()
@@ -143,8 +153,23 @@ def chiedi_a_mark(chiave, messaggi, allegati=None):
             "x-mark-key": chiave,
         })
         try:
+            dati = {}
+            ultimo_stato = None
             with urllib.request.urlopen(req, timeout=180) as r:
-                dati = json.load(r)
+                for riga in r:
+                    riga = riga.strip()
+                    if not riga:
+                        continue
+                    pezzo = json.loads(riga)
+                    if "stato" in pezzo:
+                        if on_stato and pezzo["stato"] != ultimo_stato:
+                            ultimo_stato = pezzo["stato"]
+                            try:
+                                on_stato(pezzo["stato"])
+                            except Exception as e:
+                                log("stato", repr(e))
+                    else:
+                        dati = pezzo
             break
         except urllib.error.HTTPError as e:
             try:
@@ -361,7 +386,10 @@ def gestisci(tg, chiave, codice, memoria, msg):
     memoria.aggiungi("user", testo)
     attesa = tg.segnaposto(chat_id)
     with StaScrivendo(tg, chat_id):
-        risposta = chiedi_a_mark(chiave, memoria.storia(), allegati)
+        risposta = chiedi_a_mark(
+            chiave, memoria.storia(), allegati,
+            on_stato=lambda t: tg.aggiorna(chat_id, attesa, t),
+        )
     memoria.aggiungi("assistant", risposta)
     tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
 
