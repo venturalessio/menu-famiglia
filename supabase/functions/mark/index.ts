@@ -1276,6 +1276,15 @@ async function regoleCasa(i: any) {
   return `Regole salvate. Quando arrivi a casa: ${regole.arrivo || "nessuna"}. Quando esci: ${regole.uscita || "nessuna"}.`;
 }
 
+// La coda avvisi accetta al massimo 600 caratteri per riga (vincolo in tabella)
+function tagliaAvviso(testo: string) {
+  const t = testo.trim();
+  if (t.length <= 600) return t;
+  const pezzo = t.slice(0, 597);
+  const fine = Math.max(pezzo.lastIndexOf(". "), pezzo.lastIndexOf("\n"));
+  return (fine > 300 ? pezzo.slice(0, fine + 1) : pezzo).trimEnd() + "…";
+}
+
 async function posizione(eventoRaw: unknown) {
   const evento = String(eventoRaw ?? "");
   if (evento !== "arrivo" && evento !== "uscita") return { risposta: "Evento non valido." };
@@ -1288,10 +1297,10 @@ async function posizione(eventoRaw: unknown) {
   const testo = `[Automatico dall'iPhone, ${ora}] Alessio è appena ${evento === "arrivo" ? "arrivato a casa" : "uscito di casa"}.
 Regole che ha dato per questo momento: ${regole[evento] || "nessuna"}.
 Esegui le regole (luci, prese, tapparelle, Alexa: non serrature, allarmi o cancelli) e guarda agenda e promemoria delle prossime ore.
-Poi scrivigli un messaggio breve, stile Jarvis: cosa hai fatto e cosa lo aspetta. Niente domande. Se non ci sono regole e niente in agenda, una riga di saluto.`;
+Poi scrivigli un messaggio breve, stile Jarvis, al massimo 3 righe e 400 caratteri: cosa hai fatto e cosa lo aspetta oggi (non i giorni dopo). Niente elenchi e niente domande. Se non ci sono regole e niente in agenda, una riga di saluto.`;
   const r = await rispondi([{ role: "user", content: testo }], { canale: "Posizione", casaSenzaConferma: true });
   try {
-    await db("mark_avvisi_coda", "POST", [{ fonte: "posizione", testo: r.risposta.slice(0, 1500) }]);
+    await db("mark_avvisi_coda", "POST", [{ fonte: "posizione", testo: tagliaAvviso(r.risposta) }]);
   } catch (err) {
     console.error("posizione coda", String(err));
   }
