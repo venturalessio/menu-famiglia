@@ -1482,6 +1482,7 @@ Casa:
 Gli orari degli agenti sono nel contesto sotto, letti dal database Agenti.`;
 
 // Strumenti della chat: ricerca online (lato Anthropic) e richieste in Bacheca (eseguite qui)
+// L'API accetta al massimo 20 strumenti con strict: true per richiesta: quelli senza parametri o con input tollerante restano senza.
 const TOOLS: any[] = [
   { type: "web_search_20260209", name: "web_search", max_uses: 5, user_location: { type: "approximate", country: "IT", timezone: "Europe/Rome" } },
   { type: "web_fetch_20260209", name: "web_fetch", max_uses: 5, max_content_tokens: 30000 },
@@ -1531,7 +1532,6 @@ const TOOLS: any[] = [
   {
     name: "lavori_recenti",
     description: "Cerca nei lavori fatti negli ultimi 3 giorni: tutti i messaggi della Bacheca (anche Letto e Fatto) e le pagine Risposte del Pensatore. Usalo quando Alessio cita qualcosa fatto altrove o di cui non hai il contesto.",
-    strict: true,
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -1559,7 +1559,6 @@ const TOOLS: any[] = [
   {
     name: "casa_dispositivi",
     description: "Elenco dei dispositivi Shelly di casa con nome, stanza, se sono online e lo stato attuale (acceso, spento, luminosità, apertura, temperatura).",
-    strict: true,
     input_schema: { type: "object", additionalProperties: false, properties: {}, required: [] },
   },
   {
@@ -1582,7 +1581,6 @@ const TOOLS: any[] = [
   {
     name: "alexa_dispositivi",
     description: "Elenco dei dispositivi Voice Monkey: le routine di Alexa che Mark può avviare e gli altoparlanti Echo per gli annunci.",
-    strict: true,
     input_schema: { type: "object", additionalProperties: false, properties: {}, required: [] },
   },
   {
@@ -1621,7 +1619,6 @@ const TOOLS: any[] = [
   {
     name: "promemoria_elenco",
     description: "Elenco dei promemoria e delle cose da fare ancora aperti, con id e orario.",
-    strict: true,
     input_schema: { type: "object", additionalProperties: false, properties: {}, required: [] },
   },
   {
@@ -1731,7 +1728,6 @@ const TOOLS: any[] = [
   {
     name: "sorveglia_elenco",
     description: "Le sorveglianze attive con l'ultimo controllo.",
-    strict: true,
     input_schema: { type: "object", additionalProperties: false, properties: {}, required: [] },
   },
   {
@@ -1743,7 +1739,6 @@ const TOOLS: any[] = [
   {
     name: "conversazioni_passate",
     description: "Memoria lunga: cerca nelle conversazioni passate con Alessio (Telegram, web-app, Siri), oltre gli ultimi messaggi che vedi qui.",
-    strict: true,
     input_schema: {
       type: "object",
       additionalProperties: false,
