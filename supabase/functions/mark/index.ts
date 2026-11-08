@@ -72,6 +72,16 @@ class NotionError extends Error {
   }
 }
 
+// Notion a volte risponde con una pagina HTML (guasto o manutenzione): mai girarla ad Alessio così com'è
+function erroreNotion(status: number, corpo: string) {
+  let msg = "";
+  try {
+    msg = String(JSON.parse(corpo)?.message ?? "");
+  } catch { /* non è JSON */ }
+  if (status >= 500 || status === 429 || !msg) return `Notion non risponde in questo momento (errore ${status}), riprova tra qualche minuto.`;
+  return `Notion: ${msg.slice(0, 200)}`;
+}
+
 async function notion(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`https://api.notion.com/v1/${path}`, {
     method,
@@ -82,7 +92,7 @@ async function notion(path: string, method = "GET", body?: unknown) {
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new NotionError(res.status, await res.text());
+  if (!res.ok) throw new NotionError(res.status, erroreNotion(res.status, await res.text()));
   return await res.json();
 }
 
@@ -1793,6 +1803,22 @@ const TOOLS: any[] = [
 // Due versioni del contesto: completa per la web-app, corta per Siri (meno letture da Notion, risposta più rapida)
 let cachedContext: { full?: { at: number; text: string }; lean?: { at: number; text: string } } = {};
 
+// Unisce i blocchi di testo; tra il testo scritto prima di una ricerca e quello dopo mette un a capo
+function testoRisposta(content: any[]) {
+  let out = "";
+  let staccato = false;
+  for (const b of content) {
+    if (b.type !== "text") {
+      staccato = true;
+      continue;
+    }
+    if (staccato && out && !/\s$/.test(out)) out += "\n\n";
+    out += b.text;
+    staccato = false;
+  }
+  return out.trim();
+}
+
 async function buildContext(lean = false) {
   const kind = lean ? "lean" : "full";
   const hit = cachedContext[kind];
@@ -1806,7 +1832,7 @@ async function buildContext(lean = false) {
   const promSafe = promemoriaElenco(20).then((l: any[]) => l.map((r) => `- ${descriviPromemoria(r)}`).join("\n") || "Nessuno.").catch(() => "Non leggibili.");
   let text: string;
   if (lean) {
-    const [stato, b, ag, prom] = await Promise.all([statoSafe, bacheca(15), agentiSafe, promSafe]);
+    const [stato, b, ag, prom] = await Promise.all([statoSafe, bacheca(15).catch(() => []), agentiSafe, promSafe]);
     const aperti = b.filter((m) => m.stato === "Aperto").slice(0, 10);
     text = `## Stato di oggi (fonte più affidabile)
 ${stato.slice(0, 5000)}
@@ -1820,12 +1846,15 @@ ${bachecaTxt(aperti) || "Nessuno."}
 ## Agenti e orari (ora italiana)
 ${agentiTxt(ag)}`;
   } else {
-    const [stato, about, b, d, p, ag, prom] = await Promise.all([statoSafe, pageText(ABOUT_PAGE), bacheca(25), diario(15), pagine(), agentiSafe, promSafe]);
+    const [stato, about, b, d, p, ag, prom] = await Promise.all([
+      statoSafe, pageText(ABOUT_PAGE).catch(() => "Pagina non leggibile ora (Notion non risponde)."),
+      bacheca(25).catch(() => []), diario(15).catch(() => []), pagine().catch(() => []), agentiSafe, promSafe,
+    ]);
     // Le 6 pagine modificate più di recente, escluse quelle già lette
     const giaLette = [ABOUT_PAGE, STATO_PAGE];
     const recent = p.filter((x) => !giaLette.includes(x.id.replace(/-/g, ""))).slice(0, 6);
     const texts = await Promise.all(
-      recent.map(async (x) => `### ${x.titolo} (modificata ${x.modificata})\n${(await pageText(x.id)).slice(0, 6000)}`),
+      recent.map(async (x) => `### ${x.titolo} (modificata ${x.modificata})\n${(await pageText(x.id).catch(() => "Non leggibile ora.")).slice(0, 6000)}`),
     );
     text = `## Stato di oggi (fonte più affidabile)
 ${stato.slice(0, 8000)}
@@ -2176,7 +2205,7 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
     throw err;
   }
 
-  const risposta = response.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim() || "Non sono riuscito a rispondere, riprova.";
+  const risposta = testoRisposta(response.content) || "Non sono riuscito a rispondere, riprova.";
   if (richieste.length) cachedContext = {};
   const logId = await registra({ canale, domanda, risposta, strumenti, ms: Date.now() - inizio });
   return { risposta, richieste, azioni, logId };
