@@ -1376,22 +1376,36 @@ async function bibliotecaSalva(body: any) {
       messages: [{ role: "user", content: `${intestazione}\n\nApri la pagina con web_fetch, studiala e poi scrivi la scheda con lo strumento scheda.` }],
     });
   } else {
+    // Sonnet 5.5 non accetta tool_choice forzato: si chiede la scheda nel testo e si riprova una volta se manca
     r = await client.messages.create({
       model: MODEL,
       max_tokens: 4000,
       system: SISTEMA_SCHEDA,
       tools: [STRUMENTO_SCHEDA],
-      tool_choice: { type: "tool", name: "scheda" },
       messages: [{
         role: "user",
         content: [
           ...immagini,
-          { type: "text", text: `${intestazione}${body.fonte_testo ? `\nTesto ottenuto da: ${body.fonte_testo}` : ""}\n\n${didascalia ? `Didascalia del post:\n${didascalia}\n\n` : ""}${testo ? `Trascrizione:\n${testo}` : "(Niente parlato: solo didascalia e immagini.)"}` },
+          { type: "text", text: `Scrivi la scheda con lo strumento scheda.\n\n${intestazione}${body.fonte_testo ? `\nTesto ottenuto da: ${body.fonte_testo}` : ""}\n\n${didascalia ? `Didascalia del post:\n${didascalia}\n\n` : ""}${testo ? `Trascrizione:\n${testo}` : "(Niente parlato: solo didascalia e immagini.)"}` },
         ],
       }],
     });
   }
-  const uso = (r.content ?? []).find((b: any) => b.type === "tool_use" && b.name === "scheda");
+  let uso = (r.content ?? []).find((b: any) => b.type === "tool_use" && b.name === "scheda");
+  if (!uso && r.stop_reason !== "tool_use") {
+    const r2: any = await client.messages.create({
+      model: MODEL,
+      max_tokens: 4000,
+      system: SISTEMA_SCHEDA,
+      tools: [STRUMENTO_SCHEDA],
+      messages: [
+        { role: "user", content: `${intestazione}\n\n${didascalia ? `Didascalia del post:\n${didascalia}\n\n` : ""}${testo ? `Trascrizione:\n${testo}` : ""}` },
+        { role: "assistant", content: (r.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n") || "Ho letto il contenuto." },
+        { role: "user", content: "Ora scrivi la scheda usando lo strumento scheda." },
+      ],
+    });
+    uso = (r2.content ?? []).find((b: any) => b.type === "tool_use" && b.name === "scheda");
+  }
   if (!uso || uso.input?.leggibile === false) return await fallito("il contenuto non si legge (pagina bloccata o senza testo vero)");
   const s = { ...uso.input, tipo, pubblicato: meta.pubblicato };
   for (const k of ["titolo", "autore", "temi", "riassunto", "punti", "utile", "affidabilita"]) s[k] = String(s[k] ?? "").slice(0, 8000);
