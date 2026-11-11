@@ -44,6 +44,8 @@ curl -fsSL "${BASE}/mark_telegram.py" -o /opt/mark/mark_telegram.py
 chmod 0755 /opt/mark/mark_telegram.py
 python3 -m venv /opt/mark/venv
 /opt/mark/venv/bin/pip install --no-cache-dir faster-whisper==1.2.1 "av<16" edge-tts==7.2.3
+# yt-dlp sempre all'ultima versione: YouTube cambia spesso e le versioni vecchie smettono di funzionare
+/opt/mark/venv/bin/pip install --no-cache-dir --upgrade yt-dlp
 sudo -u mark env HF_HOME=/var/lib/mark/hf /opt/mark/venv/bin/python -c \
   "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 

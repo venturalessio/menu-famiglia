@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -103,7 +104,7 @@ class Telegram:
         if not risposta.get("ok"):
             raise RuntimeError(f"Telegram sendVoice: {risposta.get('description')}")
 
-    def scrivi(self, chat_id, testo, al_posto_di=None):
+    def scrivi(self, chat_id, testo, al_posto_di=None, silenzioso=False):
         # Il segnaposto si cancella e la risposta arriva come messaggio nuovo,
         # così la notifica sul telefono mostra la risposta vera.
         if al_posto_di:
@@ -117,6 +118,7 @@ class Telegram:
                 "chat_id": chat_id,
                 "text": pezzo,
                 "link_preview_options": {"is_disabled": True},
+                "disable_notification": silenzioso,
             })
 
 
@@ -298,15 +300,21 @@ _modello = None
 _lock_modello = threading.Lock()
 
 
-def trascrivi(percorso):
+def _carica_modello():
     global _modello
+    if _modello is None:
+        from faster_whisper import WhisperModel
+        nome = os.environ.get("WHISPER_MODELLO", "small")
+        _modello = WhisperModel(nome, device="cpu", compute_type="int8")
+    return _modello
+
+
+def trascrivi(percorso, lingua="it"):
+    """Trascrive un file audio. Ritorna (testo, lingua). lingua=None la riconosce da sola."""
     with _lock_modello:
-        if _modello is None:
-            from faster_whisper import WhisperModel
-            nome = os.environ.get("WHISPER_MODELLO", "small")
-            _modello = WhisperModel(nome, device="cpu", compute_type="int8")
-        segmenti, _ = _modello.transcribe(percorso, language="it", vad_filter=True, beam_size=1)
-        return " ".join(s.text.strip() for s in segmenti).strip()
+        segmenti, info = _carica_modello().transcribe(percorso, language=lingua, vad_filter=True, beam_size=1)
+        testo = " ".join(s.text.strip() for s in segmenti).strip()
+        return testo, (lingua or info.language)
 
 
 # ---------- Conversazione ----------
@@ -430,7 +438,7 @@ def gestisci(tg, chiave, codice, memoria, msg):
             percorso = os.path.join(cartella, "nota.ogg")
             try:
                 tg.scarica(voce["file_id"], percorso)
-                testo = trascrivi(percorso)
+                testo, _ = trascrivi(percorso)
             except Exception as e:
                 log("trascrizione", repr(e))
                 tg.scrivi(chat_id, "Non sono riuscito a trascrivere la nota vocale, riprova o scrivimi.", al_posto_di=ascolto)
@@ -536,6 +544,244 @@ def sentinella(tg, chiave, memoria):
             log("sentinella", repr(e))
         time.sleep(OGNI_SECONDI)
 
+# ---------- Biblioteca: Mark studia video e pagine ----------
+# La chat mette i link in coda (tabella mark_biblioteca); qui si leggono sottotitoli o parlato
+# e il testo va alla funzione, che scrive la scheda e torna l'avviso per Telegram.
+# YouTube blocca spesso i server nei datacenter: in quel caso si passa da Apify (APIFY_TOKEN in mark.env).
+
+OGNI_SECONDI_BIBLIOTECA = 60
+MAX_SECONDI_AUDIO = 30 * 60  # oltre, si trascrivono i primi 30 minuti
+PEZZO_SECONDI = 300  # pezzi da 5 minuti: tra un pezzo e l'altro passano le note vocali
+YT_DLP = os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+RE_YOUTUBE = re.compile(r"^https?://(www\.|m\.)?(youtube\.com/(watch|shorts/|live/)|youtu\.be/)", re.I)
+RE_INSTAGRAM = re.compile(r"^https?://(www\.)?instagram\.com/(reels?|p|tv)/", re.I)
+
+
+def scarica_url(url, destinazione, timeout=120, limite=300 * 1024 * 1024):
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(destinazione, "wb") as f:
+        letti = 0
+        while True:
+            pezzo = r.read(1 << 20)
+            if not pezzo:
+                break
+            letti += len(pezzo)
+            if letti > limite:
+                raise RuntimeError("file troppo grande")
+            f.write(pezzo)
+
+
+def apify(attore, dati, timeout=180):
+    token = os.environ.get("APIFY_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("manca la chiave Apify sul server (APIFY_TOKEN)")
+    req = urllib.request.Request(
+        f"https://api.apify.com/v2/acts/{attore}/run-sync-get-dataset-items?timeout={timeout - 20}",
+        data=json.dumps(dati).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def trascrivi_lungo(audio, cartella):
+    """Trascrive fino a 30 minuti a pezzi da 5. Ritorna (testo, tagliato)."""
+    pezzi = os.path.join(cartella, "pezzi")
+    os.makedirs(pezzi, exist_ok=True)
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", audio, "-t", str(MAX_SECONDI_AUDIO), "-vn", "-ac", "1", "-ar", "16000",
+                    "-f", "segment", "-segment_time", str(PEZZO_SECONDI), os.path.join(pezzi, "p%03d.wav")], check=True, timeout=900)
+    durata = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", audio],
+                            capture_output=True, text=True, timeout=60).stdout.strip()
+    testi, lingua = [], None
+    for nome in sorted(os.listdir(pezzi)):
+        t, lingua = trascrivi(os.path.join(pezzi, nome), lingua)
+        if t:
+            testi.append(t)
+    try:
+        tagliato = float(durata) > MAX_SECONDI_AUDIO + 5
+    except ValueError:
+        tagliato = False
+    return " ".join(testi).strip(), tagliato
+
+
+def testo_vtt(percorso):
+    """Sottotitoli VTT in testo semplice, senza le righe ripetute dei sottotitoli automatici."""
+    righe, ultima = [], None
+    with open(percorso, encoding="utf-8", errors="replace") as f:
+        for riga in f:
+            riga = riga.strip()
+            if not riga or riga == "WEBVTT" or "-->" in riga or riga.isdigit() or riga.startswith(("Kind:", "Language:", "NOTE")):
+                continue
+            riga = re.sub(r"<[^>]+>", "", riga).strip()
+            if riga and riga != ultima:
+                righe.append(riga)
+                ultima = riga
+    return " ".join(righe)
+
+
+def studia_youtube(url, cartella):
+    esito = {"tipo": "youtube"}
+    try:
+        with urllib.request.urlopen(f"https://www.youtube.com/oembed?format=json&url={urllib.parse.quote(url, safe='')}", timeout=20) as r:
+            o = json.load(r)
+        esito.update(titolo=o.get("title", ""), autore=o.get("author_name", ""))
+    except Exception as e:
+        log("biblioteca oembed", repr(e))
+    problema = ""
+    try:
+        r = subprocess.run([YT_DLP, "--skip-download", "--write-info-json", "--write-subs", "--write-auto-subs",
+                            "--sub-langs", "it,it-orig,en,en-orig", "--sub-format", "vtt", "--no-playlist",
+                            "-o", os.path.join(cartella, "v.%(ext)s"), url], capture_output=True, text=True, timeout=180)
+        if r.returncode != 0:
+            problema = (r.stderr.strip().splitlines() or ["errore"])[-1][:200]
+        info_json = os.path.join(cartella, "v.info.json")
+        if os.path.exists(info_json):
+            with open(info_json) as f:
+                info = json.load(f)
+            d = str(info.get("upload_date") or "")
+            esito.update(
+                titolo=info.get("title") or esito.get("titolo", ""),
+                autore=info.get("uploader") or info.get("channel") or esito.get("autore", ""),
+                pubblicato=f"{d[6:8]}/{d[4:6]}/{d[:4]}" if len(d) == 8 else "",
+                durata=info.get("duration") or 0,
+                didascalia=(info.get("description") or "")[:3000],
+            )
+        for lingua in ("it", "it-orig", "en", "en-orig"):
+            vtt = os.path.join(cartella, f"v.{lingua}.vtt")
+            if os.path.exists(vtt):
+                testo = testo_vtt(vtt)
+                if len(testo) > 200:
+                    esito.update(trascrizione=testo, fonte_testo=f"sottotitoli YouTube ({lingua})")
+                    return esito
+        # Niente sottotitoli: si scarica l'audio e lo si trascrive qui
+        if not problema and esito.get("durata"):
+            r = subprocess.run([YT_DLP, "-f", "bestaudio/best", "--no-playlist", "-o", os.path.join(cartella, "audio.%(ext)s"), url],
+                               capture_output=True, text=True, timeout=900)
+            audio = next((os.path.join(cartella, n) for n in os.listdir(cartella) if n.startswith("audio.")), None)
+            if r.returncode == 0 and audio:
+                testo, tagliato = trascrivi_lungo(audio, cartella)
+                if testo:
+                    esito.update(trascrizione=testo, fonte_testo="trascrizione dell'audio sul server" + (" (primi 30 minuti)" if tagliato else ""))
+                    return esito
+            else:
+                problema = (r.stderr.strip().splitlines() or ["errore"])[-1][:200]
+    except Exception as e:
+        problema = repr(e)[:200]
+    # YouTube ha bloccato il server: si chiedono i sottotitoli ad Apify
+    log("biblioteca youtube", problema or "senza sottotitoli", "provo Apify")
+    try:
+        dati = apify("pintostudio~youtube-transcript-scraper", {"videoUrl": url})
+        righe = (dati[0].get("data") if dati else None) or []
+        testo = " ".join(str(x.get("text", "")).replace("\n", " ") for x in righe).strip()
+        if testo:
+            esito.update(trascrizione=testo, fonte_testo="sottotitoli YouTube via Apify")
+            return esito
+        problema = "il video non ha sottotitoli e non sono riuscito a scaricare l'audio"
+    except Exception as e:
+        problema = f"YouTube blocca il server e Apify non ha funzionato ({str(e)[:120]})"
+    esito["errore"] = problema
+    return esito
+
+
+def jpeg(sorgente, destinazione):
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", sorgente, "-vf", "scale='min(1080,iw)':-2", "-q:v", "4", destinazione],
+                   check=True, timeout=60)
+    with open(destinazione, "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
+def studia_instagram(url, cartella):
+    esito = {"tipo": "instagram"}
+    dati = apify("apify~instagram-post-scraper", {"username": [url], "resultsLimit": 1})
+    if not dati or dati[0].get("error"):
+        esito["errore"] = "Instagram non ha dato il post (privato o rimosso?)"
+        return esito
+    p = dati[0]
+    ts = str(p.get("timestamp") or "")
+    esito.update(
+        autore="@" + str(p.get("ownerUsername") or "?"),
+        titolo=(p.get("caption") or "").split("\n")[0][:150],
+        pubblicato=f"{ts[8:10]}/{ts[5:7]}/{ts[:4]}" if len(ts) >= 10 else "",
+        durata=p.get("videoDuration") or 0,
+        didascalia=(p.get("caption") or "")[:5000],
+    )
+    if p.get("videoUrl"):
+        video = os.path.join(cartella, "reel.mp4")
+        scarica_url(p["videoUrl"], video)
+        testo, tagliato = trascrivi_lungo(video, cartella)
+        esito.update(trascrizione=testo, fonte_testo="trascrizione dell'audio del reel sul server" + (" (primi 30 minuti)" if tagliato else ""))
+        # Un fotogramma ogni ~10 secondi (massimo 6) per le scritte a schermo
+        try:
+            durata = float(p.get("videoDuration") or 0) or 30
+            passo = max(durata / 6, 3)
+            immagini = []
+            for k in range(6):
+                fotogramma = os.path.join(cartella, f"f{k}.jpg")
+                subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", str(k * passo + 1), "-i", video, "-frames:v", "1",
+                                "-vf", "scale=540:-2", "-q:v", "5", fotogramma], timeout=60)
+                if os.path.exists(fotogramma) and os.path.getsize(fotogramma) > 0:
+                    with open(fotogramma, "rb") as f:
+                        immagini.append(base64.b64encode(f.read()).decode())
+            esito["immagini"] = immagini
+        except Exception as e:
+            log("biblioteca fotogrammi", repr(e))
+    else:
+        indirizzi = [c.get("displayUrl") for c in (p.get("childPosts") or []) if c.get("displayUrl")] or [p.get("displayUrl")]
+        immagini = []
+        for k, u in enumerate([u for u in indirizzi if u][:8]):
+            try:
+                grezza = os.path.join(cartella, f"s{k}")
+                scarica_url(u, grezza, limite=20 * 1024 * 1024)
+                immagini.append(jpeg(grezza, os.path.join(cartella, f"s{k}.jpg")))
+            except Exception as e:
+                log("biblioteca slide", repr(e))
+        esito["immagini"] = immagini
+        esito["fonte_testo"] = "didascalia e immagini del post"
+    return esito
+
+
+def giro_biblioteca(tg, chiave, memoria):
+    risposta = chiama_funzione(chiave, {"action": "biblioteca_prossimo"}, timeout=60)
+    for url in risposta.get("persi") or []:
+        log("biblioteca persa", url)
+    lavoro = risposta.get("lavoro")
+    if not lavoro:
+        return False
+    url = lavoro["url"]
+    log("biblioteca studio", url)
+    with tempfile.TemporaryDirectory() as cartella:
+        try:
+            if RE_YOUTUBE.match(url):
+                esito = studia_youtube(url, cartella)
+            elif RE_INSTAGRAM.match(url):
+                esito = studia_instagram(url, cartella)
+            else:
+                esito = {"tipo": "pagina"}  # la pagina la legge la funzione
+        except Exception as e:
+            log("biblioteca", repr(e))
+            esito = {"tipo": "youtube" if RE_YOUTUBE.match(url) else "instagram" if RE_INSTAGRAM.match(url) else "pagina",
+                     "errore": str(e)[:200] or "errore sul server"}
+    esito.update(action="biblioteca_salva", id=lavoro["id"])
+    fatto = chiama_funzione(chiave, esito, timeout=300)
+    avviso = fatto.get("avviso")
+    chat_id = chat_abbinata()
+    if avviso and chat_id:
+        notte = not ORA_INIZIO <= datetime.now(ROMA).hour < ORA_FINE
+        memoria.aggiungi("assistant", avviso)
+        tg.scrivi(chat_id, in_chiaro(avviso), silenzioso=notte)
+    return True
+
+
+def biblioteca(tg, chiave, memoria):
+    time.sleep(45)
+    while True:
+        altro = False
+        try:
+            altro = giro_biblioteca(tg, chiave, memoria)
+        except Exception as e:
+            log("biblioteca", repr(e))
+        time.sleep(5 if altro else OGNI_SECONDI_BIBLIOTECA)
+
 
 def main():
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
@@ -548,6 +794,7 @@ def main():
     memoria = Memoria()
     offset = None
     threading.Thread(target=sentinella, args=(tg, chiave, memoria), daemon=True).start()
+    threading.Thread(target=biblioteca, args=(tg, chiave, memoria), daemon=True).start()
     log("Mark su Telegram è partito", "(chat abbinata)" if chat_abbinata() else "(in attesa di abbinamento)")
     while True:
         try:
