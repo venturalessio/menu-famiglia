@@ -2910,7 +2910,7 @@ async function risposteNuove(): Promise<{ avvisi: string[]; stato: { ultimo: str
   });
   const nuove = (data.results as any[]).filter((r) => !visti.has(r.id));
   const avvisi = nuove.map((r) => prop(r, "Da") === "Sentinella lavoro"
-    ? prop(r, "Messaggio").slice(0, 300)
+    ? prop(r, "Messaggio").slice(0, 600) // 600: il radar Outlook mette in fondo un link lungo
     : `Il Pensatore ha risposto: ${prop(r, "Messaggio").slice(0, 200)}. Scrivimi "leggimela" e te la riassumo.`);
   // Notion arrotonda l'ora di creazione al minuto: si tengono gli id già visti dell'ultimo minuto
   const ultimo = nuove.length ? nuove[nuove.length - 1].created_time : prima.ultimo;
