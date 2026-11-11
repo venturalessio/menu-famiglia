@@ -2425,7 +2425,10 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
       output_config: { effort: "low" },
-      // La parte fissa (strumenti + regole) resta in cache da Anthropic; data e Notion cambiano e vanno dopo
+      // Cache in due punti: la parte fissa (strumenti + regole) col segno sul primo blocco del system;
+      // tutto il resto (data, Notion, conversazione) col segno automatico sull'ultimo blocco,
+      // così dal secondo giro in poi il ciclo degli strumenti rilegge il contesto dalla cache invece di ripagarlo
+      cache_control: { type: "ephemeral" },
       system: [
         { type: "text", text: opzioni.siri ? `${SYSTEM}\n\n${SIRI}` : SYSTEM, cache_control: { type: "ephemeral" } },
         { type: "text", text: `Adesso è ${now} (ISO ${nowIso}).\n\n# Cosa c'è in Notion\n${context}` },
