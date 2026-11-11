@@ -576,12 +576,21 @@ def apify(attore, dati, timeout=180):
     if not token:
         raise RuntimeError("manca la chiave Apify sul server (APIFY_TOKEN)")
     req = urllib.request.Request(
-        f"https://api.apify.com/v2/acts/{attore}/run-sync-get-dataset-items?timeout={timeout - 20}",
+        f"https://api.apify.com/v2/acts/{attore}/run-sync-get-dataset-items?timeout={timeout - 20}&maxTotalChargeUsd=0.2",
         data=json.dumps(dati).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token.strip().strip(chr(34)).strip(chr(39))}"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # Il motivo vero sta nel corpo della risposta di Apify: senza, un 400 non si capisce
+        try:
+            motivo = json.load(e).get("error", {}).get("message", "")
+        except Exception:
+            motivo = ""
+        log("apify", attore, e.code, motivo[:300])
+        raise RuntimeError(f"Apify {e.code}: {motivo[:150] or e.reason}") from None
 
 
 def trascrivi_lungo(audio, cartella):
@@ -617,6 +626,17 @@ def testo_vtt(percorso):
                 righe.append(riga)
                 ultima = riga
     return " ".join(righe)
+
+
+def testo_generico(voce):
+    """Il testo di una trascrizione in un risultato Apify di forma non nota: stringa o elenco di pezzi con text."""
+    for chiave in ("transcript_text", "transcriptText", "text", "transcript", "captions", "subtitles", "data"):
+        v = voce.get(chiave) if isinstance(voce, dict) else None
+        if isinstance(v, str) and len(v) > 50:
+            return v
+        if isinstance(v, list) and v:
+            return " ".join(str(x.get("text", "")) if isinstance(x, dict) else str(x) for x in v)
+    return ""
 
 
 def studia_youtube(url, cartella):
@@ -669,16 +689,25 @@ def studia_youtube(url, cartella):
         problema = repr(e)[:200]
     # YouTube ha bloccato il server: si chiedono i sottotitoli ad Apify
     log("biblioteca youtube", problema or "senza sottotitoli", "provo Apify")
-    try:
-        dati = apify("pintostudio~youtube-transcript-scraper", {"videoUrl": url})
-        righe = (dati[0].get("data") if dati else None) or []
-        testo = " ".join(str(x.get("text", "")).replace("\n", " ") for x in righe).strip()
-        if testo:
-            esito.update(trascrizione=testo, fonte_testo="sottotitoli YouTube via Apify")
-            return esito
-        problema = "il video non ha sottotitoli e non sono riuscito a scaricare l'audio"
-    except Exception as e:
-        problema = f"YouTube blocca il server e Apify non ha funzionato ({str(e)[:120]})"
+    # Link nella forma classica: alcuni servizi non accettano youtu.be o i parametri di condivisione
+    m = re.search(r"(?:youtu\.be/|v=|shorts/|live/)([A-Za-z0-9_-]{11})", url)
+    classico = f"https://www.youtube.com/watch?v={m.group(1)}" if m else url
+    errori = []
+    for attore, dati_attore, leggi in (
+        ("pintostudio~youtube-transcript-scraper", {"videoUrl": classico},
+         lambda d: " ".join(str(x.get("text", "")).replace("\n", " ") for x in ((d[0].get("data") if d else None) or []))),
+        ("starvibe~youtube-video-transcript", {"youtube_url": classico, "include_transcript_text": True},
+         lambda d: testo_generico(d[0] if d else {})),
+    ):
+        try:
+            testo = leggi(apify(attore, dati_attore)).strip()
+            if testo:
+                esito.update(trascrizione=testo, fonte_testo=f"sottotitoli YouTube via Apify ({attore.split('~')[0]})")
+                return esito
+            errori.append(f"{attore.split('~')[0]}: nessun sottotitolo")
+        except Exception as e:
+            errori.append(f"{attore.split('~')[0]}: {str(e)[:100]}")
+    problema = "YouTube blocca il server e Apify non ha dato i sottotitoli (" + "; ".join(errori) + ")"
     esito["errore"] = problema
     return esito
 
