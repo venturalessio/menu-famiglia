@@ -64,3 +64,11 @@ Il registro dell'installazione è in `/var/log/mark-installa.log`. Per un server
 
 Costo: CX23 5,49 € + IVA al mese più l'IPv4 (prezzi dopo il 15 giugno 2026), più il
 consumo di Claude della funzione `mark`, come per la web-app.
+
+## Biblioteca (dal 11/11/2026)
+
+Il bot controlla ogni minuto se c'è un link da studiare (tabella `mark_biblioteca`, lo mette in coda lo strumento `impara_da_link` della chat).
+- YouTube: sottotitoli con yt-dlp; se mancano, audio trascritto qui (primi 30 minuti); se YouTube blocca il server, sottotitoli da Apify (`pintostudio~youtube-transcript-scraper`, circa 0,01 $ a video).
+- Instagram: post e reel da Apify (`apify~instagram-post-scraper`), audio trascritto qui, 6 fotogrammi o le slide del carosello.
+- Pagine web: le legge la funzione con web_fetch.
+Serve `APIFY_TOKEN=...` in /etc/mark/mark.env. La scheda va nella tabella e come pagina figlia di "Biblioteca di Mark" su Notion; l'avviso arriva su Telegram (silenzioso di notte).
