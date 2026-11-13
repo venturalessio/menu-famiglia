@@ -3058,6 +3058,41 @@ Rispondi sempre con lo strumento avvisi: un elenco di frasi, una per avviso, in 
   return { avvisi, novita: novita.length, problemi };
 }
 
+// Quando una scheda della Biblioteca non riesce: un solo avviso per causa, con il motivo e il link per sistemarlo.
+// Se in coda ci sono più video, gli altri falliscono per lo stesso motivo e non devono mandare un messaggio ciascuno.
+function causaBiblioteca(messaggio: string): { chiave: string; testo: string } {
+  const m = messaggio.toLowerCase();
+  if (m.includes("usage limit") || m.includes("credit balance") || m.includes("billing")) {
+    const quando = messaggio.match(/regain access on (\d{4})-(\d{2})-(\d{2})/);
+    const fino = quando ? ` (da solo riparte il ${Number(quando[3])}/${Number(quando[2])})` : "";
+    return {
+      chiave: "limite",
+      testo: `📚 Non riesco a scrivere le schede della Biblioteca: la chiave Claude ha finito il budget del mese${fino}. Alza il limite qui: https://console.anthropic.com/settings/limits I video rimasti indietro li rimetto in coda dopo.`,
+    };
+  }
+  if (m.includes("rate limit") || m.includes("overloaded") || /\b(429|529)\b/.test(m)) {
+    return { chiave: "affollato", testo: "📚 Claude è sovraccarico e non ho potuto scrivere una scheda della Biblioteca: riprova più tardi a mandarmi il link." };
+  }
+  if (m.includes("notion")) {
+    return { chiave: "notion", testo: "📚 Notion non mi ha lasciato salvare una scheda della Biblioteca: riprova più tardi a mandarmi il link." };
+  }
+  return { chiave: "altro", testo: "📚 Non sono riuscito a scrivere la scheda del link che mi hai dato: riprova più tardi." };
+}
+
+async function avvisoBibliotecaFallita(id: number, messaggio: string): Promise<string | null> {
+  const causa = causaBiblioteca(messaggio);
+  if (causa.chiave === "altro") return causa.testo;
+  try {
+    // Altre schede fallite nelle ultime 12 ore per la stessa causa: l'avviso è già partito
+    const da = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    const recenti: any[] = await db(`mark_biblioteca?select=id,errore&stato=eq.errore&finito=gte.${encodeURIComponent(da)}&id=neq.${id}&limit=50`);
+    if (recenti.some((r) => causaBiblioteca(String(r.errore ?? "")).chiave === causa.chiave)) return null;
+  } catch {
+    // Se non si riesce a controllare, meglio un avviso in più che nessuno
+  }
+  return causa.testo;
+}
+
 // ---------- Server ----------
 
 Deno.serve(async (req) => {
@@ -3149,10 +3184,11 @@ Deno.serve(async (req) => {
         try {
           return json(await bibliotecaSalva(body));
         } catch (err) {
-          console.error("biblioteca", String((err as any)?.message ?? err).slice(0, 300));
+          const messaggio = String((err as any)?.message ?? err);
+          console.error("biblioteca", messaggio.slice(0, 300));
           const id = Math.trunc(Number(body.id));
-          if (id > 0) await db(`mark_biblioteca?id=eq.${id}`, "PATCH", { stato: "errore", errore: String((err as any)?.message ?? err).slice(0, 300), finito: new Date().toISOString() }).catch(() => {});
-          return json({ ok: false, avviso: "📚 Non sono riuscito a scrivere la scheda del link che mi hai dato: riprova più tardi." });
+          if (id > 0) await db(`mark_biblioteca?id=eq.${id}`, "PATCH", { stato: "errore", errore: messaggio.slice(0, 300), finito: new Date().toISOString() }).catch(() => {});
+          return json({ ok: false, avviso: await avvisoBibliotecaFallita(id, messaggio) });
         }
       case "posizione":
         // Dall'automazione dell'iPhone: {"action":"posizione","evento":"arrivo"|"uscita"}
