@@ -3067,7 +3067,7 @@ function causaBiblioteca(messaggio: string): { chiave: string; testo: string } {
     const fino = quando ? ` (da solo riparte il ${Number(quando[3])}/${Number(quando[2])})` : "";
     return {
       chiave: "limite",
-      testo: `📚 Non riesco a scrivere le schede della Biblioteca: la chiave Claude ha finito il budget del mese${fino}. Alza il limite qui: https://console.anthropic.com/settings/limits I video rimasti indietro li rimetto in coda dopo.`,
+      testo: `📚 Non riesco a scrivere le schede della Biblioteca: la chiave Claude ha finito il budget del mese${fino}. I video rimasti indietro si rimettono in coda dopo. Alza il limite qui: https://console.anthropic.com/settings/limits`,
     };
   }
   if (m.includes("rate limit") || m.includes("overloaded") || /\b(429|529)\b/.test(m)) {
