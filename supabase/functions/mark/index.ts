@@ -2359,7 +2359,6 @@ const TOOLS: any[] = [
   {
     name: "whatsapp_cerca",
     description: "Cerca nei messaggi WhatsApp di Alessio (personale e lavoro) salvati da Filo, dal 30 ottobre 2026. Solo lettura: non invia nulla. Filtra per chat (nome del contatto o del gruppo, anche parziale), parole nel testo e giorni indietro.",
-    strict: true,
     input_schema: {
       type: "object",
       additionalProperties: false,
