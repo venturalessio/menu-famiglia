@@ -85,6 +85,21 @@ export function taglia(testo: string, max: number): { pezzo: string; tagliato: b
   return { pezzo: (fine > max / 2 ? p.slice(0, fine + 1) : p).trimEnd(), tagliato: true };
 }
 
+// La coda di Telegram accetta al massimo 600 caratteri per riga: testo lungo in più pezzi, tagliati a capo o sul punto
+export function aPezzi(testo: string, max = 580): string[] {
+  const pezzi: string[] = [];
+  let resto = testo.trim();
+  while (resto.length > max) {
+    const p = resto.slice(0, max);
+    const fine = Math.max(p.lastIndexOf("\n"), p.lastIndexOf(". "));
+    const taglio = fine > max / 2 ? fine + 1 : max;
+    pezzi.push(resto.slice(0, taglio).trim());
+    resto = resto.slice(taglio).trim();
+  }
+  if (resto) pezzi.push(resto);
+  return pezzi;
+}
+
 const ssml = (t: string) => t.replace(/&/g, " e ").replace(/[<>]/g, " ");
 
 export function risposta(frase: string, apri = false, riprova?: string) {
