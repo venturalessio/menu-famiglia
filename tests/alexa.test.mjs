@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createSign } from "node:crypto";
-import { controllaFirma, leggiRichiesta, orarioValido, perLaVoce, risposta, taglia, urlCertificatoValido } from "../supabase/functions/mark-alexa/alexa.ts";
+import { aPezzi, controllaFirma, leggiRichiesta, orarioValido, perLaVoce, risposta, taglia, urlCertificatoValido } from "../supabase/functions/mark-alexa/alexa.ts";
 
 const dir = new URL("./fixtures-alexa/", import.meta.url);
 const chain = readFileSync(new URL("chain.pem", dir), "utf8");
@@ -81,4 +81,14 @@ test("lettura delle richieste", () => {
   assert.deepEqual(leggiRichiesta({ request: { type: "IntentRequest", intent: { name: "AMAZON.YesIntent" } } }), { tipo: "domanda", testo: "sì" });
   assert.deepEqual(leggiRichiesta({ request: { type: "IntentRequest", intent: { name: "AMAZON.StopIntent" } } }), { tipo: "stop" });
   assert.deepEqual(leggiRichiesta({ request: { type: "SessionEndedRequest" } }), { tipo: "fine" });
+});
+
+test("pezzi per Telegram: mai oltre 600 caratteri, niente testo perso", () => {
+  const lungo = Array.from({ length: 40 }, (_, i) => `- Impegno numero ${i} alle ${8 + (i % 10)}:30 con una descrizione.`).join("\n");
+  const p = aPezzi(`Risposta di Mark dall'Echo:\n${lungo}`);
+  assert.ok(p.length > 1);
+  assert.ok(p.every((x) => x.length >= 1 && x.length <= 600));
+  assert.equal(p.join(" ").replace(/\s+/g, ""), `Risposta di Mark dall'Echo:\n${lungo}`.replace(/\s+/g, ""));
+  assert.deepEqual(aPezzi("corto"), ["corto"]);
+  assert.ok(aPezzi("x".repeat(1300)).every((x) => x.length <= 600));
 });

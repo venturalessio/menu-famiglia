@@ -5,13 +5,13 @@
 // Alexa aspetta al massimo 8 secondi: se Mark ci mette di più, l'Echo dice "ci penso" e la risposta arriva
 // dopo con un annuncio Voice Monkey (e su Telegram se è lunga o se l'annuncio non va).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { controllaFirma, leggiRichiesta, orarioValido, perLaVoce, risposta, taglia, urlCertificatoValido } from "./alexa.ts";
+import { aPezzi, controllaFirma, leggiRichiesta, orarioValido, perLaVoce, risposta, taglia, urlCertificatoValido } from "./alexa.ts";
 
 // L'ID della skill non è un segreto: lo si può mettere qui o nel secret ALEXA_SKILL_ID
 const ID_SKILL = "amzn1.ask.skill.8f7efe24-85c2-4085-acee-6b2c25f4709c";
 // Nome o id dell'Echo di Voice Monkey per le risposte lente (vuoto = il primo, come gli altri annunci di Mark)
 const ECHO = "";
-const ATTESA_MS = 6500;
+const ATTESA_MS = 7000;
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { "Content-Type": "application/json;charset=UTF-8" } });
@@ -77,9 +77,9 @@ async function suTelegram(testo: string) {
   const res = await fetch(`${url}/rest/v1/mark_avvisi_coda`, {
     method: "POST",
     headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
-    body: JSON.stringify([{ fonte: "alexa", testo: testo.slice(0, 1500) }]),
+    body: JSON.stringify(aPezzi(testo).slice(0, 6).map((t) => ({ fonte: "alexa", testo: t }))),
   });
-  if (!res.ok) throw new Error(`coda ${res.status}`);
+  if (!res.ok) throw new Error(`coda ${res.status} ${(await res.text()).slice(0, 200)}`);
 }
 
 // Risposta arrivata dopo gli 8 secondi di Alexa
