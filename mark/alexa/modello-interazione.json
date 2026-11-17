@@ -1,0 +1,210 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "mark",
+      "intents": [
+        {
+          "name": "DomandaIntent",
+          "slots": [
+            {
+              "name": "testo",
+              "type": "FRASE_LIBERA"
+            }
+          ],
+          "samples": [
+            "{testo}"
+          ]
+        },
+        {
+          "name": "AMAZON.CancelIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.HelpIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.StopIntent",
+          "samples": [
+            "basta",
+            "fine",
+            "chiudi"
+          ]
+        },
+        {
+          "name": "AMAZON.YesIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NoIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.NavigateHomeIntent",
+          "samples": []
+        },
+        {
+          "name": "AMAZON.FallbackIntent",
+          "samples": []
+        }
+      ],
+      "types": [
+        {
+          "name": "FRASE_LIBERA",
+          "values": [
+            {
+              "name": {
+                "value": "che impegni ho domani"
+              }
+            },
+            {
+              "name": {
+                "value": "cosa devo fare oggi"
+              }
+            },
+            {
+              "name": {
+                "value": "accendi la luce del salotto"
+              }
+            },
+            {
+              "name": {
+                "value": "spegni tutte le luci"
+              }
+            },
+            {
+              "name": {
+                "value": "che tempo fa a Bologna"
+              }
+            },
+            {
+              "name": {
+                "value": "leggimi le mail nuove"
+              }
+            },
+            {
+              "name": {
+                "value": "ricordami di chiamare il commercialista domani alle nove"
+              }
+            },
+            {
+              "name": {
+                "value": "cosa c'è per cena stasera"
+              }
+            },
+            {
+              "name": {
+                "value": "com'è andata la giornata"
+              }
+            },
+            {
+              "name": {
+                "value": "a che ora è la riunione di giovedì"
+              }
+            },
+            {
+              "name": {
+                "value": "quanto manca alla partita di basket"
+              }
+            },
+            {
+              "name": {
+                "value": "aggiungi il latte alla lista della spesa"
+              }
+            },
+            {
+              "name": {
+                "value": "ci sono avvisi per me"
+              }
+            },
+            {
+              "name": {
+                "value": "dimmi le notizie più importanti di oggi"
+              }
+            },
+            {
+              "name": {
+                "value": "chi mi ha scritto su whatsapp"
+              }
+            },
+            {
+              "name": {
+                "value": "qual è il prossimo appuntamento"
+              }
+            },
+            {
+              "name": {
+                "value": "alza le tapparelle"
+              }
+            },
+            {
+              "name": {
+                "value": "imposta il riscaldamento a venti gradi"
+              }
+            },
+            {
+              "name": {
+                "value": "che menù abbiamo questa settimana"
+              }
+            },
+            {
+              "name": {
+                "value": "quando devo portare Margherita a scuola"
+              }
+            },
+            {
+              "name": {
+                "value": "prepara una bozza di mail per Elena"
+              }
+            },
+            {
+              "name": {
+                "value": "sì"
+              }
+            },
+            {
+              "name": {
+                "value": "no"
+              }
+            },
+            {
+              "name": {
+                "value": "nuova conversazione"
+              }
+            },
+            {
+              "name": {
+                "value": "grazie"
+              }
+            },
+            {
+              "name": {
+                "value": "cerca un ristorante per sabato sera"
+              }
+            },
+            {
+              "name": {
+                "value": "quanto ho speso questo mese"
+              }
+            },
+            {
+              "name": {
+                "value": "segna che ho finito il report"
+              }
+            },
+            {
+              "name": {
+                "value": "cosa ha detto il pensatore"
+              }
+            },
+            {
+              "name": {
+                "value": "fammi un riassunto della settimana"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
