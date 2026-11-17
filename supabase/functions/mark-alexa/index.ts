@@ -8,7 +8,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { controllaFirma, leggiRichiesta, orarioValido, perLaVoce, risposta, taglia, urlCertificatoValido } from "./alexa.ts";
 
 // L'ID della skill non è un segreto: lo si può mettere qui o nel secret ALEXA_SKILL_ID
-const ID_SKILL = "";
+const ID_SKILL = "amzn1.ask.skill.8f7efe24-85c2-4085-acee-6b2c25f4709c";
 // Nome o id dell'Echo di Voice Monkey per le risposte lente (vuoto = il primo, come gli altri annunci di Mark)
 const ECHO = "";
 const ATTESA_MS = 6500;

@@ -1,5 +1,5 @@
 // Pezzi puri della skill Alexa "Mark": controllo della firma di Amazon, testo per la voce, risposte Alexa.
-// Niente rete qui dentro, così si provano con node --test.
+// Niente rete qui dentro, così si provano con deno test -A tests/alexa.test.mjs.
 import * as x509 from "npm:@peculiar/x509@1.12.3";
 
 // Amazon: il certificato deve stare su https://s3.amazonaws.com/echo.api/ (porta 443, percorso sensibile alle maiuscole)
