@@ -1,7 +1,7 @@
 // node --test tests/posti.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { posizioneValida, nomeZona, testoPosizione, urlPubblico, immagineDaHtml, didascaliaLocale, coordinateDaRicerca, linkMappa } from "../supabase/functions/mark/posti.ts";
+import { posizioneValida, nomeZona, testoPosizione, urlPubblico, immagineDaHtml, didascaliaLocale, coordinateDaRicerca, linkMappa, paginaElenco, didascaliaHtml } from "../supabase/functions/mark/posti.ts";
 
 const ADESSO = Date.parse("2026-11-18T19:00:00Z");
 const S = ADESSO / 1000;
@@ -61,4 +61,20 @@ test("link di Google Maps e mappa nella didascalia", () => {
   const m = linkMappa("Calzavecchio", "via Calzavecchio 1, Casalecchio di Reno");
   assert.equal(m, "https://www.google.com/maps/search/?api=1&query=Calzavecchio%2C%20via%20Calzavecchio%201%2C%20Casalecchio%20di%20Reno");
   assert.match(didascaliaLocale("A", "b", null, "https://a.it", m), /\nMappa: https:\/\/www\.google\.com\/maps/);
+});
+
+test("riconosce le pagine-elenco", () => {
+  assert.equal(paginaElenco("https://www.tripadvisor.it/Restaurants-g187801-c20063-zfn20484142-Bologna.html"), true);
+  assert.equal(paginaElenco("https://www.tripadvisor.it/Restaurant_Review-g187801-d1086040-Reviews-Trattoria_Anna_Maria-Bologna.html"), false);
+  assert.equal(paginaElenco("https://www.thefork.it/ristoranti/casalecchio-di-reno-c89143/mediterraneo-t789"), true);
+  assert.equal(paginaElenco("https://www.thefork.it/ristorante/calzavecchio-r12345"), false);
+  assert.equal(paginaElenco("https://www.calzavecchio.it/"), false);
+  assert.equal(paginaElenco("https://www.sito.it/10-migliori-ristoranti-bologna"), true);
+});
+
+test("didascalia HTML con link corti e caratteri protetti", () => {
+  const d = didascaliaHtml("Bar & <Co>", "4,5 su Google", "https://p.it/?a=1&b=2", "https://x.it", "https://maps/x");
+  assert.equal(d, '<b>Bar &amp; &lt;Co&gt;</b>\n4,5 su Google\n<a href="https://p.it/?a=1&amp;b=2">Prenota</a> · <a href="https://maps/x">Apri in Maps</a>');
+  assert.match(didascaliaHtml("A", "", null, "https://a.it", ""), /<a href="https:\/\/a\.it">Pagina del locale<\/a>$/);
+  assert.ok(didascaliaHtml("A", "x".repeat(2000), "https://a.it", null, "https://m").length <= 1024);
 });
