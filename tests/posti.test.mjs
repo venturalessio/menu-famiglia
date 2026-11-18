@@ -1,7 +1,7 @@
 // node --test tests/posti.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { posizioneValida, nomeZona, testoPosizione, urlPubblico, immagineDaHtml, didascaliaLocale, coordinateDaRicerca } from "../supabase/functions/mark/posti.ts";
+import { posizioneValida, nomeZona, testoPosizione, urlPubblico, immagineDaHtml, didascaliaLocale, coordinateDaRicerca, linkMappa } from "../supabase/functions/mark/posti.ts";
 
 const ADESSO = Date.parse("2026-11-18T19:00:00Z");
 const S = ADESSO / 1000;
@@ -55,4 +55,10 @@ test("coordinate dalla ricerca di Nominatim", () => {
   assert.deepEqual(coordinateDaRicerca([{ lat: "35.9221", lon: "14.4896" }]), { lat: 35.9221, lon: 14.4896 });
   assert.equal(coordinateDaRicerca([]), null);
   assert.equal(coordinateDaRicerca({ error: "x" }), null);
+});
+
+test("link di Google Maps e mappa nella didascalia", () => {
+  const m = linkMappa("Calzavecchio", "via Calzavecchio 1, Casalecchio di Reno");
+  assert.equal(m, "https://www.google.com/maps/search/?api=1&query=Calzavecchio%2C%20via%20Calzavecchio%201%2C%20Casalecchio%20di%20Reno");
+  assert.match(didascaliaLocale("A", "b", null, "https://a.it", m), /\nMappa: https:\/\/www\.google\.com\/maps/);
 });

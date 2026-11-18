@@ -9,7 +9,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { percorsoWhatsapp, testoWhatsapp } from "./whatsapp.ts";
 import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
-import { MAX_FOTO, coordinateDaRicerca, didascaliaLocale, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
+import { MAX_FOTO, coordinateDaRicerca, didascaliaLocale, linkMappa, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -2844,7 +2844,7 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
 
 // ---------- Posizione e schede dei locali ----------
 
-type SchedaLocale = { nome: string; foto: string | null; didascalia: string; indirizzo: string; lat: number | null; lon: number | null };
+type SchedaLocale = { nome: string; foto: string | null; didascalia: string; indirizzo: string; lat: number | null; lon: number | null; link: string; mappa: string };
 
 // Nome della zona dalla posizione (OpenStreetMap Nominatim, gratis, una chiamata per domanda). Se non risponde, solo le coordinate.
 async function zonaDi(p: Posizione): Promise<string> {
@@ -2880,6 +2880,7 @@ async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
   const prenota = urlPubblico(i.prenota);
   if (!nome || !pagina) return "Serve il nome e un link https alla pagina del locale.";
   let immagine: string | null = null;
+  const esiti: string[] = [];
   for (const u of [pagina, prenota].filter(Boolean) as string[]) {
     try {
       const r = await fetch(u, {
@@ -2887,19 +2888,25 @@ async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
         redirect: "follow",
         signal: AbortSignal.timeout(8000),
       });
+      esiti.push(`${new URL(u).hostname} ${r.status}`);
       if (!r.ok || !urlPubblico(r.url)) continue;
       const html = (await r.text()).slice(0, 400_000);
       immagine = immagineDaHtml(html, r.url);
       if (immagine) break;
-    } catch {
+    } catch (err) {
       // pagina lenta o chiusa: si prova la successiva
+      esiti.push(`${new URL(u).hostname} ${String((err as any)?.name ?? "errore")}`);
     }
   }
   const indirizzo = String(i.indirizzo ?? "").trim().slice(0, 200);
   const punto = indirizzo ? await coordinateDi(`${nome}, ${indirizzo}`) ?? await coordinateDi(indirizzo) : null;
-  foto.push({ nome: nome.slice(0, 100), foto: immagine, didascalia: didascaliaLocale(nome, String(i.nota ?? ""), prenota, pagina), indirizzo, lat: punto?.lat ?? null, lon: punto?.lon ?? null });
-  const cosa = [immagine ? "la foto" : "", punto ? "il punto sulla mappa" : ""].filter(Boolean).join(" e ");
-  return `Scheda di ${nome} pronta${cosa ? `: su Telegram Alessio vede ${cosa}` : ", senza foto né mappa"}. Nel testo tieni comunque una riga per locale con il link per prenotare.`;
+  const mappa = linkMappa(nome, indirizzo);
+  console.log("mostra_locale", esiti.join(", ") || "-", immagine ? "foto" : "senza foto", punto ? "mappa" : indirizzo ? "indirizzo non trovato" : "senza indirizzo");
+  foto.push({
+    nome: nome.slice(0, 100), foto: immagine, didascalia: didascaliaLocale(nome, String(i.nota ?? ""), prenota, pagina, mappa),
+    indirizzo, lat: punto?.lat ?? null, lon: punto?.lon ?? null, link: prenota ?? pagina, mappa,
+  });
+  return `Scheda di ${nome} pronta: su Telegram Alessio la vede sotto la tua risposta, con ${immagine ? "la foto" : "l'anteprima della pagina"}, il link per prenotare e Google Maps. Nel testo basta una riga per locale; non dire nulla su foto o mappa.`;
 }
 
 // Controllo dei collegamenti senza dati personali: solo sì/no e numeri (lo usa anche Claude per le verifiche)

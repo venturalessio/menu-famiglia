@@ -84,11 +84,18 @@ export function immagineDaHtml(html: string, base: string): string | null {
 }
 
 /** Didascalia della foto su Telegram (massimo 1024 caratteri): nome, nota, link per prenotare. */
-export function didascaliaLocale(nome: string, nota: string, prenota: string | null, pagina: string | null): string {
+export function didascaliaLocale(nome: string, nota: string, prenota: string | null, pagina: string | null, mappa = ""): string {
   const righe = [nome.trim().slice(0, 120), nota.trim().slice(0, 500)];
   if (prenota) righe.push(`Prenota: ${prenota}`);
   else if (pagina) righe.push(pagina);
+  if (mappa) righe.push(`Mappa: ${mappa}`);
   return righe.filter(Boolean).join("\n").slice(0, 1024);
+}
+
+/** Link di Google Maps che cerca il locale: apre la scheda con foto, recensioni e, dove c'è, il tasto per prenotare. */
+export function linkMappa(nome: string, indirizzo: string): string {
+  const q = [nome.trim(), indirizzo.trim()].filter(Boolean).join(", ").slice(0, 200);
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
 }
 
 /** Coordinate del primo risultato di una ricerca Nominatim, oppure null. */
