@@ -38,6 +38,7 @@ FILE_CHAT = os.path.join(STATO, "chat_id")
 MEMORIA_SECONDI = 15 * 60  # come Siri: la conversazione dura 15 minuti
 MAX_MESSAGGI = 12
 LIMITE_TELEGRAM = 4000
+POSIZIONE_SECONDI = 3 * 3600  # la posizione condivisa vale 3 ore, come nella funzione
 
 
 def log(*parti):
@@ -104,6 +105,33 @@ class Telegram:
         if not risposta.get("ok"):
             raise RuntimeError(f"Telegram sendVoice: {risposta.get('description')}")
 
+    def manda_schede(self, chat_id, schede):
+        """Schede dei locali: foto con didascalia (nome, nota, link per prenotare) e punto sulla mappa."""
+        for s in (schede or [])[:4]:
+            if not isinstance(s, dict):
+                continue
+            if s.get("foto"):
+                try:
+                    self.chiama("sendPhoto", {
+                        "chat_id": chat_id, "photo": s["foto"],
+                        "caption": str(s.get("didascalia") or s.get("nome") or "")[:1024],
+                        "disable_notification": True,
+                    }, timeout=30)
+                except Exception as e:
+                    # Telegram non riesce a scaricare la foto: il link per prenotare è già nel testo
+                    log("foto locale", repr(e))
+            lat, lon = s.get("lat"), s.get("lon")
+            if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                try:
+                    self.chiama("sendVenue", {
+                        "chat_id": chat_id, "latitude": lat, "longitude": lon,
+                        "title": str(s.get("nome") or "Locale")[:100],
+                        "address": str(s.get("indirizzo") or "")[:200] or " ",
+                        "disable_notification": True,
+                    }, timeout=15)
+                except Exception as e:
+                    log("mappa locale", repr(e))
+
     def scrivi(self, chat_id, testo, al_posto_di=None, silenzioso=False):
         # Il segnaposto si cancella e la risposta arriva come messaggio nuovo,
         # così la notifica sul telefono mostra la risposta vera.
@@ -163,11 +191,14 @@ def chiama_funzione(chiave, dati, timeout=180):
         return json.load(r)
 
 
-def chiedi_a_mark(chiave, messaggi, allegati=None, on_stato=None):
-    """Chiede a Mark. Con on_stato riceve i passi mentre lavora ("Leggo la mail…")."""
+def chiedi_a_mark(chiave, messaggi, allegati=None, on_stato=None, posizione=None, schede=None):
+    """Chiede a Mark. Con on_stato riceve i passi mentre lavora ("Leggo la mail…").
+    Con posizione ({lat, lon, quando}) Mark sa dove si trova Alessio; in schede arrivano le schede dei locali."""
     richiesta = {"action": "chat", "messages": messaggi, "canale": "Telegram", "progressi": True}
     if allegati:
         richiesta["allegati"] = allegati
+    if posizione:
+        richiesta["posizione"] = posizione
     corpo = json.dumps(richiesta).encode()
     for tentativo in range(2):
         req = urllib.request.Request(FN_URL, data=corpo, headers={
@@ -211,6 +242,8 @@ def chiedi_a_mark(chiave, messaggi, allegati=None, on_stato=None):
         except Exception as e:
             log("mark", repr(e))
             return "Non riesco a raggiungere Mark in questo momento, riprova tra poco."
+    if schede is not None and isinstance(dati.get("foto"), list):
+        schede.extend(dati["foto"])
     return dati.get("risposta") or dati.get("error") or "Mark non ha risposto, riprova tra poco."
 
 
@@ -325,6 +358,14 @@ class Memoria:
     def __init__(self):
         self.voci = []  # (istante, ruolo, testo)
         self.lock = threading.Lock()
+        self._posizione = None  # {"lat", "lon", "quando"} dall'ultima posizione condivisa su Telegram
+
+    def segna_posizione(self, lat, lon, quando):
+        self._posizione = {"lat": lat, "lon": lon, "quando": quando}
+
+    def posizione(self):
+        p = self._posizione
+        return p if p and p["quando"] >= time.time() - POSIZIONE_SECONDI else None
 
     def storia(self):
         with self.lock:
@@ -430,6 +471,13 @@ def gestisci(tg, chiave, codice, memoria, msg):
         tg.scrivi(chat_id, "Fatto, ricominciamo da capo.")
         return
 
+    posto = msg.get("location")
+    if posto and isinstance(posto.get("latitude"), (int, float)) and isinstance(posto.get("longitude"), (int, float)):
+        memoria.segna_posizione(posto["latitude"], posto["longitude"], msg.get("date") or int(time.time()))
+        tg.scrivi(chat_id, "📍 Posizione presa, vale per le prossime 3 ore. Cosa ti cerco qui intorno?"
+                  + (" Seguo anche la posizione in tempo reale." if posto.get("live_period") else ""))
+        return
+
     voce = msg.get("voice") or msg.get("audio")
     ha_parlato = bool(voce)
     if voce and not testo:
@@ -487,13 +535,16 @@ def gestisci(tg, chiave, codice, memoria, msg):
 
     memoria.aggiungi("user", testo)
     attesa = tg.segnaposto(chat_id)
+    schede = []
     with StaScrivendo(tg, chat_id):
         risposta = chiedi_a_mark(
             chiave, memoria.storia(), allegati,
             on_stato=lambda t: tg.aggiorna(chat_id, attesa, t),
+            posizione=memoria.posizione(), schede=schede,
         )
     memoria.aggiungi("assistant", risposta)
     tg.scrivi(chat_id, in_chiaro(risposta), al_posto_di=attesa)
+    tg.manda_schede(chat_id, schede)
     modo = modo_voce()
     if modo == "sempre" or (modo == "auto" and ha_parlato):
         with StaScrivendo(tg, chat_id, "record_voice"):
@@ -828,7 +879,7 @@ def main():
     while True:
         try:
             aggiornamenti = tg.chiama("getUpdates", {
-                "timeout": 50, "offset": offset, "allowed_updates": ["message"],
+                "timeout": 50, "offset": offset, "allowed_updates": ["message", "edited_message"],
             })
         except Exception as e:
             log("getUpdates", repr(e))
@@ -836,6 +887,16 @@ def main():
             continue
         for u in aggiornamenti:
             offset = u["update_id"] + 1
+            modificato = u.get("edited_message")
+            if modificato:
+                # Posizione in tempo reale: Telegram la manda come messaggio modificato. Si aggiorna in silenzio.
+                posto = modificato.get("location") or {}
+                if (modificato.get("chat", {}).get("id") == chat_abbinata()
+                        and (modificato.get("from") or {}).get("id") == chat_abbinata()
+                        and isinstance(posto.get("latitude"), (int, float)) and isinstance(posto.get("longitude"), (int, float))):
+                    memoria.segna_posizione(posto["latitude"], posto["longitude"],
+                                            modificato.get("edit_date") or int(time.time()))
+                continue
             msg = u.get("message")
             # I messaggi più vecchi di 10 minuti (servizio spento) non si eseguono
             if not msg or msg.get("date", 0) < time.time() - 600:

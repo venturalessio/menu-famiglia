@@ -9,6 +9,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { percorsoWhatsapp, testoWhatsapp } from "./whatsapp.ts";
 import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
+import { MAX_FOTO, coordinateDaRicerca, didascaliaLocale, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -1971,6 +1972,12 @@ WhatsApp (solo lettura):
 Bozze di mail:
 - Se Alessio chiede di rispondere a una mail o di scriverne una, usa bozza_mail: la bozza finisce nelle Bozze di Gmail, lui la rilegge e la invia. Scrivi nel suo stile: breve, diretto, "Grazie 1000", "Buon Lavoro", firma "-A". Nella risposta dagli il link alle bozze. Non dire mai che l'hai inviata.
 
+Locali, ristoranti e posti vicini:
+- Se in fondo al messaggio c'è la posizione di Alessio, "qui", "in zona" e "vicino a me" vogliono dire quel punto: cerca con web_search usando il nome della zona e della città. Se chiede un posto vicino e la posizione non c'è, chiedigli di mandarla da Telegram (graffetta > Posizione) o di dirti dove si trova.
+- Per scegliere un locale (ristorante, bar, hotel) proponi al massimo 3 posti, i migliori per voto e recensioni, con una riga per ciascuno: cosa ha di speciale, voto e fonte, distanza o zona. Per ognuno usa mostra_locale, così su Telegram arriva la foto con il link.
+- Non puoi prenotare né telefonare. Per ogni locale trova il link diretto alla pagina di prenotazione (TheFork, OpenTable, SevenRooms, Quandoo, Resy o il modulo sul sito del locale) e mettilo in mostra_locale; se non c'è, metti il sito del locale e il numero di telefono nel testo. Mai dire "ho prenotato" o "tavolo bloccato".
+- Quando sceglie il locale, chiedi per quante persone e a che ora se non lo ha detto, poi dagli in una riga il link per prenotare e proponi il promemoria in Filo (promemoria_crea) per l'ora della cena.
+
 Prezzi e acquisti:
 - Se Alessio chiede quanto costa qualcosa, cerca online: prezzo su Amazon.it e su almeno un altro negozio, con il nome del negozio.
 - Poi chiedi se vuole comprarlo. Se dice sì, usa manda_link con il link del prodotto (preferisci Amazon.it), metti il link anche nella risposta e digli che l'acquisto lo conferma lui dal link. Tu non compri mai e non chiedi mai dati di pagamento.
@@ -2358,6 +2365,22 @@ const TOOLS: any[] = [
     },
   },
   {
+    name: "mostra_locale",
+    description: "Prepara la scheda di un locale (ristorante, bar, hotel, negozio) per Alessio: su Telegram gli arrivano la foto del posto (se la pagina ne ha una) con nome, nota e link per prenotare, e il punto sulla mappa. Al massimo 4 per risposta.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        nome: { type: "string", description: "Nome del locale" },
+        nota: { type: "string", description: "Una riga: perché sceglierlo, voto e fonte, zona o distanza" },
+        pagina: { type: "string", description: "Link https alla pagina del locale (sito ufficiale, TheFork, Tripadvisor, Google Maps) da cui prendere la foto" },
+        prenota: { type: "string", description: "Link https diretto alla pagina di prenotazione; stringa vuota se non c'è" },
+        indirizzo: { type: "string", description: "Indirizzo con città e paese, per il punto sulla mappa; stringa vuota se non lo sai" },
+      },
+      required: ["nome", "nota", "pagina", "prenota", "indirizzo"],
+    },
+  },
+  {
     name: "whatsapp_cerca",
     description: "Cerca nei messaggi WhatsApp di Alessio (personale e lavoro) salvati da Filo, dal 30 ottobre 2026. Solo lettura: non invia nulla. Filtra per chat (nome del contatto o del gruppo, anche parziale), parole nel testo e giorni indietro.",
     input_schema: {
@@ -2459,10 +2482,10 @@ const COMANDI_CASA = ["casa_comanda", "alexa_routine", "alexa_annuncio"];
 // Azioni che cambiano qualcosa fuori dalla chat: casa, memoria permanente, Pensatore (che ha la posta di lavoro)
 const AZIONI_DELICATE = [...COMANDI_CASA, "ricorda", "chiedi_al_pensatore", "sorveglia_crea", "regole_casa"];
 // Strumenti che portano nella conversazione testo scritto da altri (mail, inviti, pagine web, note)
-const FONTI_ESTERNE = ["posta_cerca", "posta_leggi", "calendario", "agenda", "menu", "lavori_recenti", "controllo_dominio", "sorveglia_elenco", "conversazioni_passate", "web_fetch", "web_search", "biblioteca", "whatsapp_cerca"];
+const FONTI_ESTERNE = ["mostra_locale", "posta_cerca", "posta_leggi", "calendario", "agenda", "menu", "lavori_recenti", "controllo_dominio", "sorveglia_elenco", "conversazioni_passate", "web_fetch", "web_search", "biblioteca", "whatsapp_cerca"];
 const SI = /^\s*(s[iì]|ok|okay|conferm[a-z]*|vai|procedi|certo|esatto|fallo|d'accordo)(?![a-zà-ù])/i;
 
-async function eseguiStrumento(block: any, richieste: any[], azioni: string[], confermato = false, canale = "web-app"): Promise<string> {
+async function eseguiStrumento(block: any, richieste: any[], azioni: string[], confermato = false, canale = "web-app", foto: SchedaLocale[] = []): Promise<string> {
   const i = block.input ?? {};
   if (AZIONI_DELICATE.includes(block.name) && !confermato) {
     throw new CasaError("Serve la conferma di Alessio: chiedigli se confermi e aspetta il suo sì nel prossimo messaggio.");
@@ -2484,6 +2507,8 @@ async function eseguiStrumento(block: any, richieste: any[], azioni: string[], c
     }
     case "lavori_recenti":
       return await lavoriRecenti(String(i.parole ?? ""));
+    case "mostra_locale":
+      return await mostraLocale(i, foto);
     case "manda_link": {
       const esito = await mandaLink({ titolo: String(i.titolo ?? ""), url: String(i.url ?? ""), nota: String(i.nota ?? "") });
       azioni.push(`Link in Bacheca: ${String(i.titolo ?? "")}`);
@@ -2611,6 +2636,7 @@ function cosaFaccio(nome: string, input: any) {
     case "lavori_recenti": return "Guardo i lavori degli ultimi giorni…";
     case "conversazioni_passate": return "Ripasso le nostre conversazioni…";
     case "whatsapp_cerca": return "Guardo i tuoi messaggi WhatsApp…";
+    case "mostra_locale": return `Preparo la scheda di ${String(input?.nome ?? "un locale").slice(0, 60)}…`;
     case "sorveglia_crea": case "sorveglia_elenco": case "sorveglia_chiudi": return "Sistemo le sorveglianze…";
     case "bozza_mail": return "Preparo la bozza in Gmail…";
     case "impara_da_link": return "Metto il link in studio…";
@@ -2625,8 +2651,9 @@ function cosaFaccio(nome: string, input: any) {
   }
 }
 
-async function chat(messages: { role: string; content: string }[], allegati?: unknown, canale?: unknown, progressi = false) {
-  const opzioni = { allegati: allegatiValidi(allegati), canale: canale === "Telegram" ? "Telegram" : undefined };
+async function chat(messages: { role: string; content: string }[], allegati?: unknown, canale?: unknown, progressi = false, posizione?: unknown) {
+  const pos = posizioneValida(posizione);
+  const opzioni = { allegati: allegatiValidi(allegati), canale: canale === "Telegram" ? "Telegram" : undefined, posizione: pos ? testoPosizione(pos, await zonaDi(pos)) : undefined };
   if (!progressi) {
     try {
       return json(await rispondi(pulisci(messages), opzioni));
@@ -2713,7 +2740,7 @@ async function siri(testoRaw: unknown) {
   return json({ ...r, continua: r.risposta.trim().endsWith("?") });
 }
 
-async function rispondi(history: { role: string; content: string }[], opzioni: { siri?: boolean; allegati?: any[]; canale?: string; onStato?: (t: string) => void; casaSenzaConferma?: boolean } = {}) {
+async function rispondi(history: { role: string; content: string }[], opzioni: { siri?: boolean; allegati?: any[]; canale?: string; onStato?: (t: string) => void; casaSenzaConferma?: boolean; posizione?: string } = {}) {
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) throw new ChatError(500, "Manca la chiave Anthropic su Supabase.");
   if (!history.length || history[history.length - 1].role !== "user") {
@@ -2744,12 +2771,13 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
   // e da una domanda all'altra la cache di Notion e della conversazione si perderebbe
   {
     const ultimo = convo[convo.length - 1];
-    const ora = { type: "text", text: `(Adesso è ${now}, ISO ${nowIso}.)` };
+    const ora = { type: "text", text: `(Adesso è ${now}, ISO ${nowIso}.)${opzioni.posizione ? `\n${opzioni.posizione}` : ""}` };
     ultimo.content = Array.isArray(ultimo.content) ? [...ultimo.content, ora] : [{ type: "text", text: String(ultimo.content) }, ora];
   }
   const richieste: { a: string; messaggio: string; dettagli: string }[] = [];
   const azioni: string[] = [];
   const strumenti: string[] = [];
+  const foto: SchedaLocale[] = [];
   let response: any;
   try {
 
@@ -2794,7 +2822,7 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
       try {
         const ok = permesso(block.name);
         if (FONTI_ESTERNE.includes(block.name)) letturaEsterna = true;
-        results.push({ type: "tool_result", tool_use_id: block.id, content: await eseguiStrumento(block, richieste, azioni, ok, canale) });
+        results.push({ type: "tool_result", tool_use_id: block.id, content: await eseguiStrumento(block, richieste, azioni, ok, canale, foto) });
       } catch (err) {
         if (err instanceof NotionError) throw err;
         const msg = err instanceof CasaError ? err.message : "Collegamento non riuscito, riprova tra poco.";
@@ -2811,7 +2839,67 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
   const risposta = testoRisposta(response.content) || "Non sono riuscito a rispondere, riprova.";
   if (richieste.length) cachedContext = {};
   const logId = await registra({ canale, domanda, risposta, strumenti, ms: Date.now() - inizio });
-  return { risposta, richieste, azioni, logId };
+  return { risposta, richieste, azioni, logId, foto };
+}
+
+// ---------- Posizione e schede dei locali ----------
+
+type SchedaLocale = { nome: string; foto: string | null; didascalia: string; indirizzo: string; lat: number | null; lon: number | null };
+
+// Nome della zona dalla posizione (OpenStreetMap Nominatim, gratis, una chiamata per domanda). Se non risponde, solo le coordinate.
+async function zonaDi(p: Posizione): Promise<string> {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&accept-language=it&lat=${p.lat}&lon=${p.lon}`, {
+      headers: { "User-Agent": "mark-assistente-personale/1.0 (uso privato)" },
+      signal: AbortSignal.timeout(5000),
+    });
+    return r.ok ? nomeZona(await r.json()) : "";
+  } catch {
+    return "";
+  }
+}
+
+// Coordinate di un indirizzo (Nominatim, gratis), per il punto sulla mappa di Telegram
+async function coordinateDi(q: string): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(q)}`, {
+      headers: { "User-Agent": "mark-assistente-personale/1.0 (uso privato)" },
+      signal: AbortSignal.timeout(5000),
+    });
+    return r.ok ? coordinateDaRicerca(await r.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Foto del locale presa dall'anteprima (og:image) della pagina; la manda il bot di Telegram
+async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
+  if (foto.length >= MAX_FOTO) return `Hai già preparato ${MAX_FOTO} schede: bastano.`;
+  const nome = String(i.nome ?? "").trim();
+  const pagina = urlPubblico(i.pagina);
+  const prenota = urlPubblico(i.prenota);
+  if (!nome || !pagina) return "Serve il nome e un link https alla pagina del locale.";
+  let immagine: string | null = null;
+  for (const u of [pagina, prenota].filter(Boolean) as string[]) {
+    try {
+      const r = await fetch(u, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; Mark/1.0)", "Accept-Language": "it-IT,it;q=0.9,en;q=0.8" },
+        redirect: "follow",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!r.ok || !urlPubblico(r.url)) continue;
+      const html = (await r.text()).slice(0, 400_000);
+      immagine = immagineDaHtml(html, r.url);
+      if (immagine) break;
+    } catch {
+      // pagina lenta o chiusa: si prova la successiva
+    }
+  }
+  const indirizzo = String(i.indirizzo ?? "").trim().slice(0, 200);
+  const punto = indirizzo ? await coordinateDi(`${nome}, ${indirizzo}`) ?? await coordinateDi(indirizzo) : null;
+  foto.push({ nome: nome.slice(0, 100), foto: immagine, didascalia: didascaliaLocale(nome, String(i.nota ?? ""), prenota, pagina), indirizzo, lat: punto?.lat ?? null, lon: punto?.lon ?? null });
+  const cosa = [immagine ? "la foto" : "", punto ? "il punto sulla mappa" : ""].filter(Boolean).join(" e ");
+  return `Scheda di ${nome} pronta${cosa ? `: su Telegram Alessio vede ${cosa}` : ", senza foto né mappa"}. Nel testo tieni comunque una riga per locale con il link per prenotare.`;
 }
 
 // Controllo dei collegamenti senza dati personali: solo sì/no e numeri (lo usa anche Claude per le verifiche)
@@ -3227,7 +3315,7 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       case "chat":
-        return await chat(body.messages ?? [], body.allegati, body.canale, body.progressi === true);
+        return await chat(body.messages ?? [], body.allegati, body.canale, body.progressi === true, body.posizione);
       case "letto": {
         if (typeof body.id !== "string" || !/^[0-9a-f-]{32,36}$/i.test(body.id)) return json({ error: "Messaggio non valido" }, 400);
         await segnaLetto(body.id);
