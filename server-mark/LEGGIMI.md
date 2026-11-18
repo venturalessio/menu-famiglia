@@ -72,3 +72,9 @@ Il bot controlla ogni minuto se c'è un link da studiare (tabella `mark_bibliote
 - Instagram: post e reel da Apify (`apify~instagram-post-scraper`), audio trascritto qui, 6 fotogrammi o le slide del carosello.
 - Pagine web: le legge la funzione con web_fetch.
 Serve `APIFY_TOKEN=...` in /etc/mark/mark.env. La scheda va nella tabella e come pagina figlia di "Biblioteca di Mark" su Notion; l'avviso arriva su Telegram (silenzioso di notte).
+
+## Posizione e locali (dal 18/11/2026)
+
+- Su Telegram: graffetta > Posizione > "Invia la mia posizione attuale" (o in tempo reale). Il bot la tiene 3 ore e la passa alla funzione con ogni domanda (`posizione: {lat, lon, quando}`); la funzione aggiunge il nome della zona (OpenStreetMap Nominatim, gratis) in fondo all'ultima domanda, così la cache del prompt non si rompe.
+- Strumento `mostra_locale`: per ogni locale proposto la funzione prende la foto di anteprima (og:image) della pagina del locale o di quella di prenotazione e le coordinate dell'indirizzo, e le restituisce in `foto`. Il bot manda la foto con nome, nota e link "Prenota:" e il punto sulla mappa (sendVenue), senza suono. Se la pagina non ha foto arriva solo la mappa; il link per prenotare è sempre anche nel testo.
+- Mark non prenota e non telefona: dà il link diretto alla pagina di prenotazione e propone il promemoria in Filo.
