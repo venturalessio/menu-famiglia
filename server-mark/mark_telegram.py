@@ -110,16 +110,29 @@ class Telegram:
         for s in (schede or [])[:4]:
             if not isinstance(s, dict):
                 continue
+            didascalia = str(s.get("didascalia") or s.get("nome") or "")[:1024]
+            inviata = False
             if s.get("foto"):
                 try:
                     self.chiama("sendPhoto", {
-                        "chat_id": chat_id, "photo": s["foto"],
-                        "caption": str(s.get("didascalia") or s.get("nome") or "")[:1024],
+                        "chat_id": chat_id, "photo": s["foto"], "caption": didascalia,
                         "disable_notification": True,
                     }, timeout=30)
+                    inviata = True
                 except Exception as e:
-                    # Telegram non riesce a scaricare la foto: il link per prenotare è già nel testo
                     log("foto locale", repr(e))
+            if not inviata and didascalia:
+                # Senza foto: la scheda come testo, con l'anteprima grande della pagina del locale
+                # (la crea Telegram, che spesso legge le pagine che ai server sono chiuse)
+                dati = {"chat_id": chat_id, "text": didascalia, "disable_notification": True}
+                link = s.get("link") or s.get("mappa")
+                dati["link_preview_options"] = (
+                    {"url": link, "prefer_large_media": True, "show_above_text": True} if link else {"is_disabled": True}
+                )
+                try:
+                    self.chiama("sendMessage", dati, timeout=15)
+                except Exception as e:
+                    log("scheda locale", repr(e))
             lat, lon = s.get("lat"), s.get("lon")
             if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
                 try:
