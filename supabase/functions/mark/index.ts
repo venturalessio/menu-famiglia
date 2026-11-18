@@ -9,7 +9,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { percorsoWhatsapp, testoWhatsapp } from "./whatsapp.ts";
 import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
-import { MAX_FOTO, coordinateDaRicerca, didascaliaLocale, linkMappa, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
+import { MAX_FOTO, coordinateDaRicerca, didascaliaHtml, didascaliaLocale, linkMappa, paginaElenco, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -1974,7 +1974,7 @@ Bozze di mail:
 
 Locali, ristoranti e posti vicini:
 - Se in fondo al messaggio c'è la posizione di Alessio, "qui", "in zona" e "vicino a me" vogliono dire quel punto: cerca con web_search usando il nome della zona e della città. Se chiede un posto vicino e la posizione non c'è, chiedigli di mandarla da Telegram (graffetta > Posizione) o di dirti dove si trova.
-- Per scegliere un locale (ristorante, bar, hotel) proponi al massimo 3 posti, i migliori per voto e recensioni, con una riga per ciascuno: cosa ha di speciale, voto e fonte, distanza o zona. Per ognuno usa mostra_locale, così su Telegram arriva la foto con il link.
+- Per scegliere un locale (ristorante, bar, hotel) proponi al massimo 3 posti, i migliori per voto e recensioni, con una riga per ciascuno: cosa ha di speciale, voto e fonte, distanza o zona. Per ognuno usa mostra_locale, così su Telegram arriva la foto con il link. In pagina metti la pagina di quel solo locale (sito ufficiale, o la sua scheda su TheFork o Tripadvisor), mai una classifica o un elenco di ristoranti: la foto verrebbe da un altro posto.
 - Non puoi prenotare né telefonare. Per ogni locale trova il link diretto alla pagina di prenotazione (TheFork, OpenTable, SevenRooms, Quandoo, Resy o il modulo sul sito del locale) e mettilo in mostra_locale; se non c'è, metti il sito del locale e il numero di telefono nel testo. Mai dire "ho prenotato" o "tavolo bloccato".
 - Quando sceglie il locale, chiedi per quante persone e a che ora se non lo ha detto, poi dagli in una riga il link per prenotare e proponi il promemoria in Filo (promemoria_crea) per l'ora della cena.
 
@@ -2373,7 +2373,7 @@ const TOOLS: any[] = [
       properties: {
         nome: { type: "string", description: "Nome del locale" },
         nota: { type: "string", description: "Una riga: perché sceglierlo, voto e fonte, zona o distanza" },
-        pagina: { type: "string", description: "Link https alla pagina del locale (sito ufficiale, TheFork, Tripadvisor, Google Maps) da cui prendere la foto" },
+        pagina: { type: "string", description: "Link https alla pagina di QUESTO locale (sito ufficiale, o la sua scheda su TheFork o Tripadvisor) da cui prendere la foto; mai una classifica o una ricerca" },
         prenota: { type: "string", description: "Link https diretto alla pagina di prenotazione; stringa vuota se non c'è" },
         indirizzo: { type: "string", description: "Indirizzo con città e paese, per il punto sulla mappa; stringa vuota se non lo sai" },
       },
@@ -2844,7 +2844,7 @@ async function rispondi(history: { role: string; content: string }[], opzioni: {
 
 // ---------- Posizione e schede dei locali ----------
 
-type SchedaLocale = { nome: string; foto: string | null; didascalia: string; indirizzo: string; lat: number | null; lon: number | null; link: string; mappa: string };
+type SchedaLocale = { nome: string; foto: string | null; didascalia: string; didascalia_html: string; indirizzo: string; lat: number | null; lon: number | null; link: string; mappa: string };
 
 // Nome della zona dalla posizione (OpenStreetMap Nominatim, gratis, una chiamata per domanda). Se non risponde, solo le coordinate.
 async function zonaDi(p: Posizione): Promise<string> {
@@ -2879,6 +2879,9 @@ async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
   const pagina = urlPubblico(i.pagina);
   const prenota = urlPubblico(i.prenota);
   if (!nome || !pagina) return "Serve il nome e un link https alla pagina del locale.";
+  if (paginaElenco(pagina)) {
+    return `${pagina} è una classifica o una ricerca con tanti locali: la foto non sarebbe di ${nome}. Trova la pagina di questo solo locale (sito ufficiale, o la sua scheda su TheFork o Tripadvisor) e richiama mostra_locale.`;
+  }
   let immagine: string | null = null;
   const esiti: string[] = [];
   for (const u of [pagina, prenota].filter(Boolean) as string[]) {
@@ -2891,6 +2894,7 @@ async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
       esiti.push(`${new URL(u).hostname} ${r.status}`);
       if (!r.ok || !urlPubblico(r.url)) continue;
       const html = (await r.text()).slice(0, 400_000);
+      if (paginaElenco(r.url)) continue;
       immagine = immagineDaHtml(html, r.url);
       if (immagine) break;
     } catch (err) {
@@ -2904,7 +2908,8 @@ async function mostraLocale(i: any, foto: SchedaLocale[]): Promise<string> {
   console.log("mostra_locale", esiti.join(", ") || "-", immagine ? "foto" : "senza foto", punto ? "mappa" : indirizzo ? "indirizzo non trovato" : "senza indirizzo");
   foto.push({
     nome: nome.slice(0, 100), foto: immagine, didascalia: didascaliaLocale(nome, String(i.nota ?? ""), prenota, pagina, mappa),
-    indirizzo, lat: punto?.lat ?? null, lon: punto?.lon ?? null, link: prenota ?? pagina, mappa,
+    didascalia_html: didascaliaHtml(nome, String(i.nota ?? ""), prenota, pagina, mappa),
+    indirizzo, lat: punto?.lat ?? null, lon: punto?.lon ?? null, link: pagina, mappa,
   });
   return `Scheda di ${nome} pronta: su Telegram Alessio la vede sotto la tua risposta, con ${immagine ? "la foto" : "l'anteprima della pagina"}, il link per prenotare e Google Maps. Nel testo basta una riga per locale; non dire nulla su foto o mappa.`;
 }

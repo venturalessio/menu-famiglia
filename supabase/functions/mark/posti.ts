@@ -105,3 +105,33 @@ export function coordinateDaRicerca(risultati: unknown): { lat: number; lon: num
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
   return { lat, lon };
 }
+
+/** Pagina che elenca tanti locali (classifiche, ricerche): la sua foto non è del locale scelto. */
+export function paginaElenco(u: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(u);
+  } catch {
+    return false;
+  }
+  const host = url.hostname.replace(/^www\./, "");
+  const p = url.pathname;
+  if (/(^|\.)tripadvisor\./.test(host)) return !/Restaurant_Review|Hotel_Review|Attraction_Review/.test(p);
+  if (/(^|\.)thefork\./.test(host)) return !/^\/ristorante\/|^\/restaurant\//.test(p);
+  if (host.startsWith("google.") && p.startsWith("/search")) return true;
+  return /\/(search|ricerca|cerca)(\/|$)|migliori|classifica|\btop-?\d+/i.test(p);
+}
+
+function esc(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Didascalia per Telegram in HTML: nome in grassetto, nota, e i link come parole corte. */
+export function didascaliaHtml(nome: string, nota: string, prenota: string | null, pagina: string | null, mappa = ""): string {
+  const link = [
+    prenota ? `<a href="${esc(prenota)}">Prenota</a>` : pagina ? `<a href="${esc(pagina)}">Pagina del locale</a>` : "",
+    mappa ? `<a href="${esc(mappa)}">Apri in Maps</a>` : "",
+  ].filter(Boolean).join(" · ");
+  const testo = [`<b>${esc(nome.trim().slice(0, 120))}</b>`, esc(nota.trim().slice(0, 500)), link].filter(Boolean).join("\n");
+  return testo.length <= 1024 ? testo : [`<b>${esc(nome.trim().slice(0, 120))}</b>`, link].join("\n");
+}

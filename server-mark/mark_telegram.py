@@ -110,29 +110,37 @@ class Telegram:
         for s in (schede or [])[:4]:
             if not isinstance(s, dict):
                 continue
-            didascalia = str(s.get("didascalia") or s.get("nome") or "")[:1024]
+            semplice = str(s.get("didascalia") or s.get("nome") or "")[:1024]
+            html = str(s.get("didascalia_html") or "")[:1024]
+            # Prima in HTML (link corti: "Prenota", "Apri in Maps"); se Telegram lo rifiuta, testo semplice
+            versioni = ([{"parse_mode": "HTML", "testo": html}] if html else []) + [{"testo": semplice}]
             inviata = False
             if s.get("foto"):
-                try:
-                    self.chiama("sendPhoto", {
-                        "chat_id": chat_id, "photo": s["foto"], "caption": didascalia,
-                        "disable_notification": True,
-                    }, timeout=30)
-                    inviata = True
-                except Exception as e:
-                    log("foto locale", repr(e))
-            if not inviata and didascalia:
+                for v in versioni:
+                    try:
+                        dati = {"chat_id": chat_id, "photo": s["foto"], "caption": v["testo"], "disable_notification": True}
+                        if v.get("parse_mode"):
+                            dati["parse_mode"] = v["parse_mode"]
+                        self.chiama("sendPhoto", dati, timeout=30)
+                        inviata = True
+                        break
+                    except Exception as e:
+                        log("foto locale", repr(e))
+            if not inviata and semplice:
                 # Senza foto: la scheda come testo, con l'anteprima grande della pagina del locale
                 # (la crea Telegram, che spesso legge le pagine che ai server sono chiuse)
-                dati = {"chat_id": chat_id, "text": didascalia, "disable_notification": True}
                 link = s.get("link") or s.get("mappa")
-                dati["link_preview_options"] = (
-                    {"url": link, "prefer_large_media": True, "show_above_text": True} if link else {"is_disabled": True}
-                )
-                try:
-                    self.chiama("sendMessage", dati, timeout=15)
-                except Exception as e:
-                    log("scheda locale", repr(e))
+                anteprima = {"url": link, "prefer_large_media": True, "show_above_text": True} if link else {"is_disabled": True}
+                for v in versioni:
+                    try:
+                        dati = {"chat_id": chat_id, "text": v["testo"], "disable_notification": True,
+                                "link_preview_options": anteprima}
+                        if v.get("parse_mode"):
+                            dati["parse_mode"] = v["parse_mode"]
+                        self.chiama("sendMessage", dati, timeout=15)
+                        break
+                    except Exception as e:
+                        log("scheda locale", repr(e))
             lat, lon = s.get("lat"), s.get("lon")
             if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
                 try:
