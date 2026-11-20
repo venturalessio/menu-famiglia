@@ -40,6 +40,7 @@ export function segnaliTruffa(i: {
   dmarc?: string;
   rispondiA?: string[];
   linkHost?: string[];
+  destinatari?: string[];
 }): string[] {
   const segnali: string[] = [];
   const dominio = dominioBase(i.indirizzo.split("@")[1] ?? "");
@@ -47,7 +48,13 @@ export function segnaliTruffa(i: {
   const falliti = [["SPF", i.spf], ["DKIM", i.dkim], ["DMARC", i.dmarc]].filter(([, v]) => ko(v as string)).map(([n]) => n);
   if (falliti.length) segnali.push(`controlli del mittente falliti (${falliti.join(", ")})`);
 
-  const altri = (i.rispondiA ?? []).map((a) => dominioBase(a.split("@")[1] ?? "")).filter((d) => d && d !== dominio);
+  // Le ricevute di PayPal e simili mettono come Reply-To l'indirizzo di Alessio (a volte troncato, "…@gmai"):
+  // le risposte che tornano a lui stesso non sono un segnale
+  const suoi = new Set((i.destinatari ?? []).map((a) => a.toLowerCase().split("@")[0]).filter(Boolean));
+  const altri = (i.rispondiA ?? [])
+    .filter((a) => !suoi.has(a.toLowerCase().split("@")[0]))
+    .map((a) => dominioBase(a.split("@")[1] ?? ""))
+    .filter((d) => d && d.includes(".") && d !== dominio);
   if (altri.length) segnali.push(`le risposte vanno a un altro dominio (${[...new Set(altri)].join(", ")})`);
 
   // Il nome dice un marchio, l'indirizzo no (es. "PayPal" <avviso@qualcosa.top>)

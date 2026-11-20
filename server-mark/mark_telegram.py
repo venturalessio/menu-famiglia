@@ -162,13 +162,17 @@ class Telegram:
             except Exception as e:
                 log("segnaposto", repr(e))
         pezzi = dividi(testo)
+        inviati = []
         for pezzo in pezzi:
-            self.chiama("sendMessage", {
+            r = self.chiama("sendMessage", {
                 "chat_id": chat_id,
                 "text": pezzo,
                 "link_preview_options": {"is_disabled": True},
                 "disable_notification": silenzioso,
             })
+            if isinstance(r, dict) and r.get("message_id"):
+                inviati.append(r["message_id"])
+        return inviati
 
 
 def dividi(testo, limite=LIMITE_TELEGRAM):
@@ -452,7 +456,94 @@ class StaScrivendo:
         self.fine.set()
 
 
-def gestisci(tg, chiave, codice, memoria, msg):
+# ---------- Risposte a un messaggio preciso ----------
+# Quando Alessio usa "Rispondi" su un messaggio, Telegram manda anche il messaggio citato
+# (reply_to_message). Mark lo riceve nel testo, così sa a cosa si riferisce anche dopo i 15 minuti.
+# Per gli avvisi si tiene da parte anche cosa aveva visto la sentinella (righe "mail <uid> | …"),
+# così Mark può aprire subito la mail giusta.
+
+FILE_ARCHIVIO = os.path.join(STATO, "avvisi_inviati.json")
+MAX_ARCHIVIO = 300
+MAX_CITATO = 1500
+
+
+class Archivio:
+    """Avvisi mandati su Telegram: message_id -> testo, ora e dati della sentinella."""
+
+    def __init__(self, percorso=FILE_ARCHIVIO):
+        self.percorso = percorso
+        self.lock = threading.Lock()
+
+    def _leggi(self):
+        try:
+            with open(self.percorso) as f:
+                dati = json.load(f)
+            return dati if isinstance(dati, dict) else {}
+        except (FileNotFoundError, ValueError):
+            return {}
+
+    def segna(self, message_ids, testo, fonti=None):
+        if not message_ids:
+            return
+        with self.lock:
+            dati = self._leggi()
+            voce = {"quando": int(time.time()), "testo": testo, "fonti": [str(x) for x in (fonti or [])][:30]}
+            for mid in message_ids:
+                dati[str(mid)] = voce
+            if len(dati) > MAX_ARCHIVIO:
+                for k in sorted(dati, key=lambda k: dati[k].get("quando", 0))[: len(dati) - MAX_ARCHIVIO]:
+                    del dati[k]
+            os.makedirs(os.path.dirname(self.percorso) or ".", exist_ok=True)
+            temp = self.percorso + ".tmp"
+            with open(temp, "w") as f:
+                json.dump(dati, f, ensure_ascii=False)
+            os.replace(temp, self.percorso)
+
+    def trova(self, message_id):
+        with self.lock:
+            return self._leggi().get(str(message_id))
+
+
+def contesto_risposta(msg, archivio=None):
+    """Se il messaggio risponde a un altro, ritorna il testo che spiega a Mark a cosa si riferisce."""
+    citato = msg.get("reply_to_message")
+    if not isinstance(citato, dict):
+        return ""
+    da_bot = bool((citato.get("from") or {}).get("is_bot"))
+    chi = "un tuo messaggio (di Mark)" if da_bot else "un mio messaggio precedente"
+    quando = ""
+    if isinstance(citato.get("date"), (int, float)):
+        quando = " delle " + datetime.fromtimestamp(citato["date"], ROMA).strftime("%H:%M del %d/%m")
+    corpo = (citato.get("text") or citato.get("caption") or "").strip()
+    if not corpo:
+        if citato.get("voice") or citato.get("audio"):
+            corpo = "(una nota vocale)"
+        elif citato.get("photo") or citato.get("document"):
+            corpo = "(una foto o un file, senza testo)"
+        elif citato.get("venue") or citato.get("location"):
+            v = citato.get("venue") or {}
+            corpo = f"(un luogo sulla mappa{': ' + v.get('title') if v.get('title') else ''})"
+        else:
+            corpo = "(un messaggio senza testo)"
+    # Link nascosti dietro le parole (text_link): nel testo semplice non si vedono
+    link = [e.get("url") for e in (citato.get("entities") or citato.get("caption_entities") or [])
+            if isinstance(e, dict) and e.get("type") == "text_link" and e.get("url")]
+    if link:
+        corpo += "\nLink nel messaggio: " + " ".join(link[:5])
+    if len(corpo) > MAX_CITATO:
+        corpo = corpo[:MAX_CITATO] + "…"
+    righe = [f"[Sto rispondendo a {chi}{quando}: «{corpo}»]"]
+    parte = ((msg.get("quote") or {}).get("text") or "").strip()
+    if parte:
+        righe.append(f"[In particolare questa parte: «{parte[:500]}»]")
+    voce = archivio.trova(citato.get("message_id")) if (archivio and da_bot) else None
+    if voce and voce.get("fonti"):
+        righe.append("[Cosa aveva visto la sentinella quando ha mandato questo avviso (l'uid serve per posta_leggi):\n"
+                     + "\n".join(voce["fonti"]) + "]")
+    return "\n".join(righe) + "\n"
+
+
+def gestisci(tg, chiave, codice, memoria, msg, archivio=None):
     chat = msg.get("chat", {})
     chat_id = chat.get("id")
     mittente = (msg.get("from") or {}).get("id")
@@ -554,6 +645,7 @@ def gestisci(tg, chiave, codice, memoria, msg):
         tg.scrivi(chat_id, "Leggo testo, note vocali, foto, screenshot e PDF. Questo messaggio non lo so leggere.")
         return
 
+    testo = contesto_risposta(msg, archivio) + testo
     memoria.aggiungi("user", testo)
     attesa = tg.segnaposto(chat_id)
     schede = []
@@ -592,7 +684,7 @@ def avvisi_attivi(valore=None):
     return valore
 
 
-def giro_sentinella(tg, chiave, memoria):
+def giro_sentinella(tg, chiave, memoria, archivio=None):
     chat_id = chat_abbinata()
     if chat_id is None or not avvisi_attivi():
         return
@@ -601,17 +693,23 @@ def giro_sentinella(tg, chiave, memoria):
     esito = chiama_funzione(chiave, {"action": "sentinella"}, timeout=120)
     if esito.get("problemi"):
         log("sentinella", esito["problemi"])
+    fonti = esito.get("fonti") if isinstance(esito.get("fonti"), list) else []
     for avviso in esito.get("avvisi") or []:
         testo = f"🔔 {avviso}"
         memoria.aggiungi("assistant", testo)
-        tg.scrivi(chat_id, in_chiaro(testo))
+        inviati = tg.scrivi(chat_id, in_chiaro(testo))
+        if archivio:
+            try:
+                archivio.segna(inviati, testo, fonti)
+            except Exception as e:
+                log("archivio avvisi", repr(e))
 
 
-def sentinella(tg, chiave, memoria):
+def sentinella(tg, chiave, memoria, archivio=None):
     time.sleep(30)
     while True:
         try:
-            giro_sentinella(tg, chiave, memoria)
+            giro_sentinella(tg, chiave, memoria, archivio)
         except Exception as e:
             log("sentinella", repr(e))
         time.sleep(OGNI_SECONDI)
@@ -893,8 +991,9 @@ def main():
         sys.exit(1)
     tg = Telegram(token)
     memoria = Memoria()
+    archivio = Archivio()
     offset = None
-    threading.Thread(target=sentinella, args=(tg, chiave, memoria), daemon=True).start()
+    threading.Thread(target=sentinella, args=(tg, chiave, memoria, archivio), daemon=True).start()
     threading.Thread(target=biblioteca, args=(tg, chiave, memoria), daemon=True).start()
     log("Mark su Telegram è partito", "(chat abbinata)" if chat_abbinata() else "(in attesa di abbinamento)")
     while True:
@@ -923,7 +1022,7 @@ def main():
             if not msg or msg.get("date", 0) < time.time() - 600:
                 continue
             try:
-                gestisci(tg, chiave, codice, memoria, msg)
+                gestisci(tg, chiave, codice, memoria, msg, archivio)
             except Exception as e:
                 log("messaggio", repr(e))
 

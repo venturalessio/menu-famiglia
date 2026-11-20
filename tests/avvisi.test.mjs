@@ -39,3 +39,16 @@ test("mail vere: nessun segnale", () => {
   assert.equal(daControllare("Menu della settimana", "Mensa Ribò", "info@ribo.it"), false);
   assert.equal(dominioBase("a.b.item-step.com"), "item-step.com");
 });
+
+test("ricevuta PayPal vera con Reply-To = Alessio troncato: nessun segnale (falso allarme del 20/11)", () => {
+  const vera = {
+    oggetto: "Ricevuta del tuo pagamento a favore di Apple Services", nome: "PayPal", indirizzo: "assistenza@paypal.it",
+    spf: "pass", dkim: "pass", dmarc: "pass", rispondiA: ["ventura.alessio@gmai"],
+    linkHost: ["www.paypal.com", "www.paypalobjects.com", "t.paypal.com"],
+  };
+  assert.deepEqual(segnaliTruffa({ ...vera, destinatari: ["ventura.alessio@gmail.com"] }), []);
+  // Anche senza destinatari: "gmai" non è un dominio, non conta
+  assert.deepEqual(segnaliTruffa(vera), []);
+  // Un Reply-To vero verso un altro dominio resta un segnale
+  assert.match(segnaliTruffa({ ...vera, rispondiA: ["rimborsi@paypal-help.top"], destinatari: ["ventura.alessio@gmail.com"] })[0], /altro dominio \(paypal-help\.top\)/);
+});
