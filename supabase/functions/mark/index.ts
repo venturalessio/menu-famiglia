@@ -3002,6 +3002,8 @@ async function segnaliMail(c: any, uid: number): Promise<string[]> {
     dmarc: voce("dmarc"),
     rispondiA: (m.replyTo ?? []).map((r: any) => String(r.address ?? "").toLowerCase()).filter(Boolean),
     linkHost: [...host].slice(0, 50),
+    destinatari: [...(m.to ?? []), ...(m.cc ?? [])].map((r: any) => String(r.address ?? "").toLowerCase())
+      .concat(String(Deno.env.get("GMAIL_INDIRIZZO") ?? "").toLowerCase()).filter(Boolean),
   });
 }
 
