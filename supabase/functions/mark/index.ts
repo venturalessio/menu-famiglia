@@ -10,6 +10,7 @@ import Anthropic from "npm:@anthropic-ai/sdk";
 import { percorsoWhatsapp, testoWhatsapp } from "./whatsapp.ts";
 import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
 import { MAX_FOTO, coordinateDaRicerca, didascaliaHtml, didascaliaLocale, linkMappa, paginaElenco, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
+import { agendaPannello, casaPannello } from "./pannello.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -622,6 +623,38 @@ async function agendaFilo(dal: string, giorni: number) {
   if (tk.length) righe.push("Attività con scadenza:", ...tk.map((t: any) => `- ${ora(t.due)} ${t.title} (${t.priority})`));
   if (rem.length) righe.push("Promemoria:", ...rem.map((r: any) => `- ${ora(r.at)} ${r.text}`));
   return righe.join("\n");
+}
+
+// ---------- Pannello "Jarvis": agenda di oggi e casa in forma di dati ----------
+
+async function pannelloDati() {
+  const oggi = partiRoma(new Date());
+  const inizio = daRoma(oggi.y, oggi.m, oggi.d, 0, 0);
+  const fine = new Date(inizio.getTime() + 864e5 + 3600e3);
+  const da = encodeURIComponent(inizio.toISOString()), a = encodeURIComponent(fine.toISOString());
+  const giorno = `${oggi.y}-${String(oggi.m).padStart(2, "0")}-${String(oggi.d).padStart(2, "0")}`;
+  const vuoto = () => [] as any[];
+  const [ev, occ, ppl, tk, rem, pl, casa, b, prom] = await Promise.all([
+    db(`events?select=title,start_at,end_at,location,all_day,scope&cancelled=eq.false&start_at=gte.${da}&start_at=lt.${a}&order=start_at.asc&limit=40`).catch(vuoto),
+    db(`routine_occurrences?select=title,who,start_at,location,needs_escort,drop_off_by,pick_up_by,status&day=eq.${giorno}&order=start_at.asc&limit=40`).catch(vuoto),
+    db("people?select=id,name").catch(vuoto),
+    db(`tasks?select=title,due,priority&done=eq.false&dismissed=eq.false&suggested=eq.false&due=gte.${da}&due=lt.${a}&order=due.asc&limit=20`).catch(vuoto),
+    db(`reminders?select=text,at&fired=eq.false&at=gte.${da}&at=lt.${a}&order=at.asc&limit=20`).catch(vuoto),
+    db(`plans?select=data&day=eq.${giorno}&limit=1`).catch(vuoto),
+    casaDispositivi().then((l) => ({ ok: true, dispositivi: casaPannello(l) })).catch((e) => ({ ok: false, errore: e instanceof CasaError ? e.message : "Casa non raggiungibile", dispositivi: [] })),
+    bacheca(30).catch(vuoto),
+    promemoriaElenco().catch(vuoto),
+  ]);
+  const nome = new Map<string, string>(ppl.map((p: any) => [p.id, p.name]));
+  const piano = pl[0]?.data ?? null;
+  return {
+    agenda: agendaPannello(ev, occ, rem, tk, nome),
+    piano: piano?.headline ? { titolo: String(piano.headline), attenzione: (piano.warnings ?? []).map(String) } : null,
+    casa,
+    perTe: b.filter((m: any) => m.a === "Alessio" && m.stato === "Aperto").slice(0, 6),
+    promemoria: prom,
+    aggiornato: new Date().toISOString(),
+  };
 }
 
 // ---------- Menù di famiglia (stessa base dati) ----------
@@ -3319,6 +3352,8 @@ Deno.serve(async (req) => {
 
   try {
     switch (body.action) {
+      case "pannello":
+        return json(await pannelloDati());
       case "panoramica": {
         const [b, d, p, prom] = await Promise.all([bacheca(30), diario(20), pagine(), promemoriaElenco().catch(() => [])]);
         return json({ bacheca: b, diario: d, pagine: p, promemoria: prom });

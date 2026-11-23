@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mark · Pannello</title>
+  <meta name="theme-color" content="#04070d">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mark">
+  <meta name="robots" content="noindex">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="pannello.css">
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <section id="chiave" class="chiave hidden">
+    <form id="key-form" class="hud-card">
+      <p class="hud-label">Accesso</p>
+      <p class="hud-title">Chiave di Mark</p>
+      <p class="dim small">La stessa della web-app di Mark. Si inserisce una volta su questo dispositivo.</p>
+      <input id="key" type="password" autocomplete="current-password" required aria-label="Chiave">
+      <button class="hud-btn" type="submit">Entra</button>
+      <p id="key-err" class="err small"></p>
+    </form>
+  </section>
+
+  <div id="pannello" class="layout hidden">
+    <header class="top">
+      <div>
+        <p class="ora" id="ora">--:--</p>
+        <p class="data" id="data"></p>
+      </div>
+      <div class="meteo" id="meteo" aria-live="polite"></div>
+      <div class="azioni">
+        <button class="icon" id="schermo" aria-label="Tieni lo schermo acceso" aria-pressed="false" title="Tieni lo schermo acceso">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </button>
+        <button class="icon" id="aggiorna" aria-label="Aggiorna i dati" title="Aggiorna i dati">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></svg>
+        </button>
+        <a class="icon" href="./" aria-label="Torna alla web-app di Mark" title="Web-app di Mark">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </a>
+      </div>
+    </header>
+
+    <aside class="col sinistra">
+      <section class="hud-card">
+        <p class="hud-label">Agenda di oggi</p>
+        <div id="piano"></div>
+        <ul class="lista" id="agenda"><li class="dim">Carico…</li></ul>
+      </section>
+    </aside>
+
+    <main class="centro">
+      <button class="sfera-wrap" id="sfera-btn" aria-label="Parla con Mark">
+        <canvas id="sfera" aria-hidden="true"></canvas>
+        <span class="anello" aria-hidden="true"></span>
+      </button>
+      <p class="stato" id="stato" aria-live="polite">Tocca la sfera e parla</p>
+      <div class="dialogo" aria-live="polite">
+        <p class="io" id="io"></p>
+        <p class="mark" id="risposta"></p>
+      </div>
+      <div class="chips">
+        <button class="chip" data-chiedi="Fammi il punto della giornata in tre frasi.">Punto della giornata</button>
+        <button class="chip" data-chiedi="Com'è la situazione in casa?">Casa</button>
+        <button class="chip" data-chiedi="Cosa devo ricordarmi oggi?">Da ricordare</button>
+      </div>
+      <form class="scrivi" id="scrivi">
+        <input id="testo" placeholder="Oppure scrivi a Mark…" autocomplete="off" enterkeyhint="send" aria-label="Scrivi a Mark">
+        <button class="icon" type="submit" aria-label="Invia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+      </form>
+    </main>
+
+    <aside class="col destra">
+      <section class="hud-card">
+        <p class="hud-label">Casa</p>
+        <ul class="lista casa" id="casa"><li class="dim">Carico…</li></ul>
+      </section>
+      <section class="hud-card">
+        <p class="hud-label">Promemoria</p>
+        <ul class="lista" id="promemoria"><li class="dim">Carico…</li></ul>
+      </section>
+      <section class="hud-card">
+        <p class="hud-label">Per te dagli agenti</p>
+        <ul class="lista" id="perte"><li class="dim">Carico…</li></ul>
+      </section>
+      <p class="dim small aggiornato" id="aggiornato"></p>
+    </aside>
+  </div>
+
+  <script type="module" src="pannello.js"></script>
+</body>
+</html>
