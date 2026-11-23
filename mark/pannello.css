@@ -1,0 +1,168 @@
+/* Pannello "Jarvis" di Mark: schermo scuro, ciano, una sfera viva al centro */
+:root {
+  --bg: #04070d;
+  --panel: rgba(12, 24, 38, 0.62);
+  --line: rgba(110, 220, 255, 0.16);
+  --line-strong: rgba(110, 220, 255, 0.42);
+  --text: #e6f6ff;
+  --dim: #7f97a8;
+  --cyan: #5fe1ff;
+  --amber: #ffb547;
+  --red: #ff6b6b;
+  --green: #5cf0a6;
+  --radius: 14px;
+  font: 100%/1.45 -apple-system, "SF Pro Text", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; min-height: 100dvh; background: var(--bg); color: var(--text); }
+body { overflow-x: hidden; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; touch-action: manipulation; }
+.hidden { display: none !important; }
+.dim { color: var(--dim); }
+.small { font-size: 0.82rem; }
+.err { color: var(--red); }
+svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.grid-bg {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(60% 50% at 50% 38%, rgba(40, 140, 200, 0.18), transparent 70%),
+    linear-gradient(rgba(95, 225, 255, 0.04) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, rgba(95, 225, 255, 0.04) 1px, transparent 1px) 0 0 / 40px 40px;
+}
+
+/* ---------- layout ---------- */
+.layout {
+  position: relative; z-index: 1;
+  display: grid; gap: 16px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  grid-template-areas: "top" "centro" "sinistra" "destra";
+  max-width: 1500px; margin: 0 auto;
+}
+.top { grid-area: top; display: flex; align-items: center; gap: 16px; }
+.centro { grid-area: centro; display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 0; }
+.sinistra { grid-area: sinistra; }
+.destra { grid-area: destra; }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+@media (min-width: 1000px) {
+  .layout {
+    min-height: 100dvh;
+    grid-template-columns: minmax(280px, 1fr) minmax(380px, 1.25fr) minmax(280px, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "top top top" "sinistra centro destra";
+    align-items: start;
+  }
+  .centro { justify-content: center; align-self: center; }
+}
+
+/* ---------- testata ---------- */
+.ora { margin: 0; font-size: 2.4rem; font-weight: 200; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; line-height: 1; }
+.data { margin: 4px 0 0; color: var(--dim); font-size: 0.85rem; text-transform: capitalize; }
+.meteo { margin-left: auto; text-align: right; font-size: 0.85rem; color: var(--dim); }
+.meteo strong { display: block; color: var(--text); font-size: 1.3rem; font-weight: 300; }
+.azioni { display: flex; gap: 4px; }
+.icon {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: rgba(12, 24, 38, 0.5); display: grid; place-items: center; color: var(--dim);
+  transition: color 160ms ease-out, border-color 160ms ease-out, transform 100ms ease-out;
+}
+.icon:hover { color: var(--cyan); border-color: var(--line-strong); }
+.icon:active { transform: scale(0.94); }
+.icon[aria-pressed="true"] { color: var(--cyan); border-color: var(--cyan); }
+@media (max-width: 520px) {
+  .top { flex-wrap: wrap; }
+  .meteo { order: 3; width: 100%; text-align: left; margin-left: 0; display: flex; flex-wrap: wrap; column-gap: 10px; align-items: baseline; }
+  .meteo strong { display: inline; white-space: nowrap; }
+  .azioni { margin-left: auto; }
+}
+
+/* ---------- carte HUD ---------- */
+.hud-card {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.hud-card::before {
+  content: ""; position: absolute; left: 14px; top: -1px; width: 36px; height: 2px;
+  background: var(--cyan); border-radius: 2px; box-shadow: 0 0 10px var(--cyan);
+}
+.hud-label { margin: 0 0 10px; font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cyan); }
+.hud-title { margin: 0 0 6px; font-size: 1.15rem; }
+.lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.lista li { display: grid; grid-template-columns: 64px 1fr; gap: 10px; align-items: baseline; }
+.lista li.dim, .lista li.vuoto { display: block; color: var(--dim); font-size: 0.9rem; }
+.lista .t { font-variant-numeric: tabular-nums; color: var(--cyan); font-size: 0.85rem; }
+.lista .t.passato { color: var(--dim); }
+.lista .cosa { min-width: 0; overflow-wrap: anywhere; }
+.lista .sub { display: block; color: var(--dim); font-size: 0.8rem; }
+.lista li.ora-adesso .t { color: var(--amber); }
+.piano { margin: 0 0 12px; font-size: 0.9rem; }
+.piano .att { color: var(--amber); display: block; font-size: 0.82rem; margin-top: 4px; }
+
+.casa li { grid-template-columns: 12px 1fr; }
+.led { width: 8px; height: 8px; border-radius: 50%; background: #2a3b48; margin-top: 6px; }
+.led.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.led.off-line { background: var(--red); }
+.aggiornato { text-align: right; margin: 0; }
+
+/* ---------- sfera ---------- */
+.sfera-wrap {
+  position: relative; border: 0; background: none; padding: 0;
+  width: min(78vw, 46vh, 440px); aspect-ratio: 1; border-radius: 50%;
+}
+.sfera-wrap:focus-visible { outline: 2px solid var(--cyan); outline-offset: 6px; }
+#sfera { width: 100%; height: 100%; display: block; }
+.anello {
+  position: absolute; inset: 6%; border-radius: 50%; pointer-events: none;
+  border: 1px solid var(--line);
+  box-shadow: inset 0 0 40px rgba(95, 225, 255, 0.08);
+}
+body[data-stato="ascolto"] .anello { border-color: var(--cyan); animation: respira 1.4s ease-in-out infinite; }
+body[data-stato="penso"] .anello { border-color: var(--amber); border-style: dashed; animation: gira 6s linear infinite; }
+@keyframes respira { 50% { transform: scale(1.03); opacity: 0.6; } }
+@keyframes gira { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  body[data-stato] .anello { animation: none; }
+}
+
+.stato { margin: 0; font-size: 0.75rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); }
+body[data-stato="ascolto"] .stato { color: var(--cyan); }
+body[data-stato="penso"] .stato { color: var(--amber); }
+body[data-stato="parlo"] .stato { color: var(--green); }
+
+.dialogo { width: 100%; max-width: 560px; text-align: center; min-height: 3em; }
+.dialogo p { margin: 6px 0; overflow-wrap: anywhere; }
+.dialogo .io { color: var(--dim); font-size: 0.9rem; }
+.dialogo .io:not(:empty)::before { content: "Tu: "; }
+.dialogo .mark { font-size: 1.08rem; line-height: 1.5; }
+.dialogo .mark a { color: var(--cyan); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.chip {
+  border: 1px solid var(--line); background: rgba(12, 24, 38, 0.5); border-radius: 999px;
+  padding: 7px 14px; font-size: 0.85rem; color: var(--text);
+  transition: border-color 160ms ease-out, transform 100ms ease-out;
+}
+.chip:hover { border-color: var(--line-strong); }
+.chip:active { transform: scale(0.97); }
+.scrivi { display: flex; gap: 8px; width: 100%; max-width: 460px; }
+.scrivi input, .chiave input {
+  flex: 1; min-width: 0; border: 1px solid var(--line); background: rgba(4, 10, 18, 0.7);
+  border-radius: 999px; padding: 10px 16px; font-size: 16px; outline: none;
+}
+.scrivi input:focus, .chiave input:focus { border-color: var(--cyan); }
+
+/* ---------- chiave ---------- */
+.chiave { position: relative; z-index: 1; min-height: 100dvh; display: grid; place-items: center; padding: 16px; }
+.chiave form { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
+.chiave input { border-radius: 10px; }
+.hud-btn {
+  border: 1px solid var(--cyan); background: rgba(95, 225, 255, 0.12); color: var(--cyan);
+  border-radius: 10px; padding: 10px; font-weight: 600;
+}
