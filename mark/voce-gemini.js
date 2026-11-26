@@ -75,6 +75,11 @@ export function rispostaStrumento(chiamata, risposta, errore) {
   };
 }
 
+export function conLimite(promessa, ms, messaggio) {
+  let t;
+  return Promise.race([promessa, new Promise((_, ko) => { t = setTimeout(() => ko(new Error(messaggio)), ms); })]).finally(() => clearTimeout(t));
+}
+
 // ---------- worklet del microfono (in linea: niente file in più) ----------
 
 const WORKLET = `class Mic extends AudioWorkletProcessor {
@@ -159,7 +164,7 @@ export function creaVoceGemini(o) {
   }
 
   function messaggio(m) {
-    if (m.setupComplete) { pronto = true; o.suStato("ascolto"); silenzio(); return; }
+    if (m.setupComplete) { pronto = true; inAttesaSetup?.(); inAttesaSetup = null; o.suStato("ascolto"); silenzio(); return; }
     if (m.sessionResumptionUpdate?.resumable && m.sessionResumptionUpdate.newHandle) handle = m.sessionResumptionUpdate.newHandle;
     if (m.goAway) { riconnetti(); return; }
     if (m.toolCall) { for (const c of m.toolCall.functionCalls ?? []) if (c.name === "chiedi_a_mark") strumento(c); return; }
@@ -187,21 +192,30 @@ export function creaVoceGemini(o) {
     }
   }
 
+  // Si risolve solo quando Google conferma la sessione (setupComplete), con limiti di tempo per ogni passo
+  let inAttesaSetup = null;
   function apri(token) {
     return new Promise((ok, ko) => {
       pronto = false;
+      let fatto = false;
+      const fine = (err) => { if (fatto) return; fatto = true; clearTimeout(t); inAttesaSetup = null; err ? ko(err) : ok(); };
+      let t = setTimeout(() => fine(new Error("Non riesco a raggiungere Google: la rete potrebbe bloccare la voce")), 10_000);
+      inAttesaSetup = () => fine();
       ws = new WebSocket(`${WS}?access_token=${encodeURIComponent(token)}`);
       ws.onopen = () => {
+        clearTimeout(t);
+        t = setTimeout(() => fine(new Error("Google non ha confermato la sessione")), 10_000);
         // La configurazione vera è bloccata nel token: qui basta il modello (e la sessione da riprendere)
         manda({ setup: { model: "models/gemini-3.8-live", ...(handle ? { sessionResumption: { handle } } : {}) } });
-        ok();
       };
       ws.onmessage = async (e) => {
         const testo = typeof e.data === "string" ? e.data : await e.data.text();
         try { messaggio(JSON.parse(testo)); } catch (err) { console.error("voce", err); }
       };
-      ws.onerror = () => ko(new Error("Collegamento con Gemini non riuscito"));
+      ws.onerror = () => fine(new Error("Collegamento con Gemini non riuscito"));
       ws.onclose = (e) => {
+        console.warn("voce chiusa", e.code, e.reason);
+        if (!fatto) { fine(new Error(`Google ha chiuso la sessione (${e.code}${e.reason ? ": " + e.reason.slice(0, 80) : ""})`)); return; }
         if (chiusa || e.target !== ws) return;
         if (e.code !== 1000) console.warn("voce chiusa", e.code, e.reason);
         chiudi(e.reason || "chiusa");
@@ -228,12 +242,14 @@ export function creaVoceGemini(o) {
     ctxOut = new (window.AudioContext || window.webkitAudioContext)();
     ctxIn = new (window.AudioContext || window.webkitAudioContext)();
     ctxOut.resume(); ctxIn.resume();
-    o.suStato("penso", "Mi collego…");
+    o.suStato("penso", "Consenti il microfono…");
     stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" }));
     await ctxIn.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
-    tokenAttuale = await o.token();
+    o.suStato("penso", "Chiedo il permesso a Mark…");
+    tokenAttuale = await conLimite(o.token(), 12_000, "Mark non ha risposto per la voce Gemini");
+    o.suStato("penso", "Mi collego a Google…");
     await apri(tokenAttuale);
     src = ctxIn.createMediaStreamSource(stream);
     nodo = new AudioWorkletNode(ctxIn, "mark-mic");
