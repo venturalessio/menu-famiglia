@@ -212,7 +212,8 @@ async function avviaLive() {
     if (e.name === "NotAllowedError") { stato("errore", "Serve il permesso per il microfono"); return; }
     // Ripiego: voce del browser, così la sfera risponde comunque
     console.warn("voce Gemini", e.message);
-    stato("riposo", `${e.message} · uso la voce del browser`);
+    $("#risposta").textContent = `Voce Gemini non partita: ${e.message}. Uso la voce del browser.`;
+    stato("riposo", "Uso la voce del browser");
     setTimeout(ascolta, 600);
   }
 }
