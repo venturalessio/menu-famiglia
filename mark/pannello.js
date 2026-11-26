@@ -1,8 +1,9 @@
 // Pannello "Jarvis" di Mark: agenda, casa, promemoria e meteo a colpo d'occhio,
-// e una sfera che ascolta e risponde a voce. Gratis: voce del browser, meteo Open-Meteo.
+// e una sfera che ascolta e risponde a voce: Gemini Live se c'è la chiave, altrimenti voce del browser. Meteo Open-Meteo.
 // Usa la stessa chiave della web-app di Mark (stessa memoria del browser).
 import { SUPABASE_URL, SUPABASE_KEY } from "../config.js";
 import { creaSfera } from "./sfera.js";
+import { creaVoceGemini } from "./voce-gemini.js";
 
 const FN_URL = `${SUPABASE_URL}/functions/v1/mark`;
 const BOLOGNA = { lat: 44.4949, lon: 11.3426 };
@@ -166,7 +167,57 @@ async function dati() {
   }
 }
 
-// ---------- voce ----------
+// ---------- voce Gemini (conversazione dal vivo) ----------
+// Gemini parla e ascolta, Mark resta il cervello: ogni richiesta su Alessio passa dall'azione "siri".
+// Se manca la chiave Gemini o qualcosa va storto, si torna alla voce del browser.
+
+let voceLive = null;
+let geminiNo = new URLSearchParams(location.search).get("voce") === "browser";
+
+async function tokenVoce() {
+  const r = await api({ action: "voce_token" });
+  if (!r.ok) throw Object.assign(new Error(r.errore || "Voce Gemini non disponibile"), { senzaChiave: /Manca la chiave/.test(r.errore || "") });
+  return r.token;
+}
+
+async function chiediAMark(testo) {
+  const r = await api({ action: "siri", testo });
+  if (/accend|spegn|ricord|promemoria|tapparell|luce|luci|sposta|evento/i.test(testo)) setTimeout(dati, 2500);
+  return r.risposta;
+}
+
+async function avviaLive() {
+  speechSynthesis?.cancel?.();
+  $("#io").textContent = "";
+  $("#risposta").textContent = "";
+  voceLive = creaVoceGemini({
+    token: tokenVoce,
+    chiediAMark,
+    suStato: (s, t) => stato(s, t ?? (s === "ascolto" ? "Ti ascolto · tocca per chiudere" : undefined)),
+    suIo: (t) => { $("#io").textContent = t; },
+    suMark: (t) => { $("#risposta").innerHTML = linkify(t); },
+    suAvviso: (t) => { const p = document.createElement("span"); p.className = "att"; p.textContent = t; $("#risposta").append(document.createElement("br"), p); },
+    suColpo: (f) => sfera?.colpo(f),
+    suFine: (motivo) => {
+      voceLive = null;
+      stato("riposo", motivo === "silenzio" ? "Chiuso per silenzio · tocca per riparlare" : undefined);
+    },
+  });
+  try {
+    await voceLive.avvia();
+  } catch (e) {
+    voceLive?.chiudi("errore");
+    voceLive = null;
+    if (e.senzaChiave) geminiNo = true;
+    if (e.name === "NotAllowedError") { stato("errore", "Serve il permesso per il microfono"); return; }
+    // Ripiego: voce del browser, così la sfera risponde comunque
+    console.warn("voce Gemini", e.message);
+    stato("riposo", `${e.message} · uso la voce del browser`);
+    setTimeout(ascolta, 600);
+  }
+}
+
+// ---------- voce del browser (ripiego) ----------
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null;
@@ -326,16 +377,20 @@ function avvia() {
   setInterval(() => { if (!document.hidden) dati(); }, OGNI_DATI);
 
   $("#sfera-btn").onclick = () => {
+    if (voceLive) { voceLive.chiudi("fine"); return; }
     if (parlando) { speechSynthesis.cancel(); return; }
-    if (!inAttesa) ascolta();
+    if (inAttesa) return;
+    if (!geminiNo && navigator.mediaDevices?.getUserMedia && window.AudioWorkletNode) avviaLive();
+    else ascolta();
   };
-  document.querySelectorAll("[data-chiedi]").forEach((b) => (b.onclick = () => chiedi(b.dataset.chiedi)));
+  document.querySelectorAll("[data-chiedi]").forEach((b) => (b.onclick = () => (voceLive ? voceLive.scrivi(b.dataset.chiedi) : chiedi(b.dataset.chiedi))));
   $("#scrivi").onsubmit = (e) => {
     e.preventDefault();
     const t = $("#testo").value.trim();
     if (!t) return;
     $("#testo").value = "";
-    chiedi(t);
+    if (voceLive) voceLive.scrivi(t);
+    else chiedi(t);
   };
   $("#aggiorna").onclick = () => { dati(); meteo(); };
   $("#schermo").onclick = () => schermo(!lock);
@@ -348,6 +403,7 @@ function avvia() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       if (rec) { rec.annullato = true; try { rec.abort(); } catch { /* fermo */ } }
+      voceLive?.chiudi("nascosta");
     } else {
       dati();
       if (store.get("mark.pannello.schermo", false) && !lock) schermo(true);

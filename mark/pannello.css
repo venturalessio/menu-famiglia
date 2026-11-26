@@ -166,3 +166,4 @@ body[data-stato="parlo"] .stato { color: var(--green); }
   border: 1px solid var(--cyan); background: rgba(95, 225, 255, 0.12); color: var(--cyan);
   border-radius: 10px; padding: 10px; font-weight: 600;
 }
+.dialogo .att { color: var(--amber); font-size: 0.85rem; }

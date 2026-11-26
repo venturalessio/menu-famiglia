@@ -1,6 +1,6 @@
 // Backend della web-app "Mark": legge il quartier generale in Notion,
 // risponde ad Alessio con Claude e scrive le sue richieste in Bacheca.
-// Secret richiesti: ANTHROPIC_API_KEY, NOTION_TOKEN, MARK_ACCESS_KEY.
+// Secret richiesti: ANTHROPIC_API_KEY, NOTION_TOKEN, MARK_ACCESS_KEY. Facoltativo: GEMINI_API_KEY (voce del pannello).
 // Casa (facoltativi): SHELLY_AUTH_KEY, SHELLY_SERVER (Shelly Cloud), VOICEMONKEY_TOKEN (Alexa).
 // Pensatore (facoltativo): PENSATORE_ID e PENSATORE_TOKEN, ID e token API dell'attività "Mark – Pensatore" creata su claude.ai/code/routines.
 // Promemoria: stanno nelle tabelle di Filo (reminders, tasks); notifiche da Filo, annunci Alexa da qui (azione annuncia_promemoria).
@@ -12,6 +12,7 @@ import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
 import { leggiIcs, trovaSpostamento, type EventoFilo } from "./eventi.ts";
 import { MAX_FOTO, coordinateDaRicerca, didascaliaHtml, didascaliaLocale, linkMappa, paginaElenco, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 import { agendaPannello, casaPannello } from "./pannello.ts";
+import { URL_TOKEN, corpoToken, erroreToken, oggiRoma } from "./voce.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -2794,6 +2795,26 @@ async function registra(r: { canale: string; domanda: string; risposta?: string;
   }
 }
 
+// Token temporaneo per la voce Gemini del pannello (secret GEMINI_API_KEY, creato da Alessio in AI Studio).
+// Senza chiave il pannello resta sulla voce del browser.
+async function voceToken() {
+  const chiave = (Deno.env.get("GEMINI_API_KEY") ?? "").trim();
+  if (!chiave) return { ok: false, errore: "Manca la chiave Gemini su Supabase: uso la voce del browser." };
+  const adesso = Date.now();
+  const res = await fetch(URL_TOKEN, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": chiave },
+    body: JSON.stringify(corpoToken(oggiRoma(adesso), adesso)),
+  });
+  if (!res.ok) {
+    console.error("voce_token", res.status, (await res.text()).slice(0, 300));
+    return { ok: false, errore: erroreToken(res.status) };
+  }
+  const t = await res.json();
+  if (typeof t?.name !== "string" || !t.name) return { ok: false, errore: "Gemini non ha dato il token." };
+  return { ok: true, token: t.name };
+}
+
 async function siri(testoRaw: unknown) {
   const testo = String(testoRaw ?? "").trim().slice(0, 2000);
   if (!testo) return json({ risposta: "Non ho sentito, riprova.", continua: false });
@@ -3440,6 +3461,8 @@ Deno.serve(async (req) => {
     switch (body.action) {
       case "pannello":
         return json(await pannelloDati());
+      case "voce_token":
+        return json(await voceToken());
       case "panoramica": {
         const [b, d, p, prom] = await Promise.all([bacheca(30), diario(20), pagine(), promemoriaElenco().catch(() => [])]);
         return json({ bacheca: b, diario: d, pagine: p, promemoria: prom });
