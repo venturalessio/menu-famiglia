@@ -15,7 +15,7 @@ export function istruzioniVoce(oggi: string): string {
     "REGOLA PIÙ IMPORTANTE. Tu sei solo la voce: non hai accesso a niente della vita di Alessio e non puoi fare azioni.",
     "Per qualsiasi cosa che riguarda Alessio, la sua famiglia, la sua agenda, i promemoria, la casa (luci, prese, tapparelle, riscaldamento, Alexa), la posta, il lavoro, Filo, Notion, gli agenti, i prezzi da comprare, o qualsiasi azione da fare, chiami SEMPRE lo strumento chiedi_a_mark.",
     "Nella richiesta a Mark scrivi la frase di Alessio completa, con tutti i dettagli che ha detto: numeri di telefono, orari, date, nomi, importi. Non riassumere e non togliere niente.",
-    "Mentre aspetti Mark di' solo una frase breve, per esempio: «Un attimo, chiedo.» Non anticipare la risposta.",
+    "Mentre aspetti Mark stai zitto: la frase di attesa la dice già il pannello. Non anticipare la risposta.",
     "Non dire MAI «fatto», «impostato», «acceso», «spento», «segnato», «inviato» o simili se non è Mark ad averlo detto nella sua risposta. Se Mark non ha confermato, l'azione non è stata fatta.",
     "Quando arriva la risposta di Mark, riferiscila fedelmente: puoi accorciarla, ma numeri, orari e nomi restano identici. Se Mark dice che non è riuscito, lo dici.",
     "Se Mark fa una domanda o chiede una conferma, la fai ad Alessio e poi passi a Mark la sua risposta con chiedi_a_mark, parola per parola.",
@@ -79,4 +79,48 @@ export function erroreToken(status: number): string {
   if (status === 401 || status === 403) return "La chiave Gemini su Supabase non è valida.";
   if (status === 429) return "Limite gratuito di Gemini raggiunto, riprova più tardi.";
   return `Gemini non risponde (errore ${status}).`;
+}
+
+// Frase di attesa detta con la stessa voce, generata una volta da Gemini TTS e suonata dal pannello
+// appena parte la richiesta a Mark (così si sente sempre, anche se Gemini resta zitto).
+export const FRASE_ATTESA = "Un attimo, chiedo a Mark.";
+export const MODELLO_TTS = "gemini-3.8-flash-tts";
+export const URL_TTS = `https://generativelanguage.googleapis.com/v1beta/models/${MODELLO_TTS}:generateContent`;
+
+export function corpoTts(testo = FRASE_ATTESA, voce = VOCE_PREDEFINITA) {
+  return {
+    contents: [{ parts: [{ text: `Dillo in italiano, con tono calmo e cortese: ${testo}` }] }],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voce } } },
+    },
+  };
+}
+
+// Dalla risposta TTS al PCM 16 bit (base64). Se Google manda un WAV, tolgo l'intestazione.
+export function pcmDaTts(risposta: any): { audio: string; rate: number } | null {
+  const part = risposta?.candidates?.[0]?.content?.parts?.find((p: any) => p?.inlineData?.data);
+  const dati: string | undefined = part?.inlineData?.data;
+  if (!dati) return null;
+  const mime = String(part.inlineData.mimeType ?? "");
+  const rate = Number(/rate=(\d+)/.exec(mime)?.[1] ?? 24000);
+  const bin = Uint8Array.from(atob(dati), (c) => c.charCodeAt(0));
+  const wav = bin.length > 44 && bin[0] === 0x52 && bin[1] === 0x49 && bin[2] === 0x46 && bin[3] === 0x46;
+  if (!wav) return { audio: dati, rate };
+  // WAV: cerco il blocco "data" e prendo il PCM dopo
+  const dv = new DataView(bin.buffer);
+  const wavRate = dv.getUint32(24, true);
+  let i = 12;
+  while (i + 8 <= bin.length) {
+    const id = String.fromCharCode(bin[i], bin[i + 1], bin[i + 2], bin[i + 3]);
+    const len = dv.getUint32(i + 4, true);
+    if (id === "data") {
+      const pcm = bin.subarray(i + 8, i + 8 + len);
+      let s = "";
+      for (let k = 0; k < pcm.length; k += 0x8000) s += String.fromCharCode(...pcm.subarray(k, k + 0x8000));
+      return { audio: btoa(s), rate: wavRate };
+    }
+    i += 8 + len + (len % 2);
+  }
+  return null;
 }

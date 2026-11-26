@@ -147,10 +147,25 @@ export function creaVoceGemini(o) {
     manda({ realtimeInput: { audio: { data: bytesABase64(new Uint8Array(pcm.buffer)), mimeType: `audio/pcm;rate=${IN_RATE}` } } });
   }
 
+  // Frase di attesa con la voce di Gemini, suonata qui: si sente sempre, anche se Gemini resta zitto
+  let attesa = null;
+  function diciAttesa() {
+    if (!attesa || !ctxOut) return;
+    const f = pcm16AFloat(new Int16Array(base64ABytes(attesa.audio).buffer));
+    const buf = ctxOut.createBuffer(1, f.length, attesa.rate || OUT_RATE);
+    buf.copyToChannel(f, 0);
+    const s = ctxOut.createBufferSource();
+    s.buffer = buf;
+    s.connect(ctxOut.destination);
+    s.start(Math.max(ctxOut.currentTime + 0.02, prossimo));
+    o.suColpo(0.7);
+  }
+
   async function strumento(c) {
     chiestoInQuestoTurno = true;
+    if (!inAttesaMark) diciAttesa();
     inAttesaMark++;
-    o.suStato("penso");
+    o.suStato("penso", "Chiedo a Mark…");
     const richiesta = String(c.args?.richiesta ?? "").trim();
     try {
       const r = await o.chiediAMark(richiesta);
@@ -248,6 +263,8 @@ export function creaVoceGemini(o) {
     await ctxIn.audioWorklet.addModule(url);
     URL.revokeObjectURL(url);
     o.suStato("penso", "Chiedo il permesso a Mark…");
+    // la frase di attesa arriva in parallelo; se non arriva, pazienza
+    o.attesa?.().then((a) => { attesa = a; }).catch(() => {});
     tokenAttuale = await conLimite(o.token(), 12_000, "Mark non ha risposto per la voce Gemini");
     o.suStato("penso", "Mi collego a Google…");
     await apri(tokenAttuale);

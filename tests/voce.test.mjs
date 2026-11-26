@@ -67,3 +67,24 @@ test("risposta allo strumento: id e nome della chiamata, interrompe per riferire
   const ko = rispostaStrumento(c, null, "timeout");
   assert.match(ko.toolResponse.functionResponses[0].response.errore, /non dire che è fatto/);
 });
+
+test("frase di attesa: Gemini sta zitto, la dice il pannello con la voce Orus", async () => {
+  const { istruzioniVoce, corpoTts, pcmDaTts, FRASE_ATTESA } = await import("../supabase/functions/mark/voce.ts");
+  assert.match(istruzioniVoce("x"), /stai zitto/);
+  assert.equal(corpoTts().generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Orus");
+  assert.match(corpoTts().contents[0].parts[0].text, new RegExp(FRASE_ATTESA));
+  // PCM grezzo
+  const raw = Buffer.from([1, 0, 2, 0]).toString("base64");
+  assert.deepEqual(pcmDaTts({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "audio/L16;codec=pcm;rate=24000", data: raw } }] } }] }), { audio: raw, rate: 24000 });
+  // WAV: tolgo l'intestazione e leggo la frequenza
+  const pcm = Buffer.from([5, 0, 6, 0, 7, 0, 8, 0, 9, 0, 10, 0, 11, 0, 12, 0, 13, 0, 14, 0]);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVE", 8); h.write("fmt ", 12); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(24000, 24); h.writeUInt32LE(48000, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
+  const wav = Buffer.concat([h, pcm]).toString("base64");
+  const r = pcmDaTts({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "audio/wav", data: wav } }] } }] });
+  assert.equal(r.rate, 24000);
+  assert.deepEqual([...Buffer.from(r.audio, "base64")], [...pcm]);
+  assert.equal(pcmDaTts({}), null);
+});
