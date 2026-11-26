@@ -12,7 +12,7 @@ import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
 import { leggiIcs, trovaSpostamento, type EventoFilo } from "./eventi.ts";
 import { MAX_FOTO, coordinateDaRicerca, didascaliaHtml, didascaliaLocale, linkMappa, paginaElenco, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 import { agendaPannello, casaPannello } from "./pannello.ts";
-import { URL_TOKEN, corpoToken, erroreToken, oggiRoma } from "./voce.ts";
+import { URL_TOKEN, URL_TTS, corpoToken, corpoTts, erroreToken, oggiRoma, pcmDaTts } from "./voce.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -2815,6 +2815,27 @@ async function voceToken() {
   return { ok: true, token: t.name };
 }
 
+// Frase di attesa con la voce Orus: generata una volta e tenuta in memoria finché la funzione resta accesa
+let attesaInMemoria: { audio: string; rate: number } | null = null;
+async function voceAttesa() {
+  if (attesaInMemoria) return { ok: true, ...attesaInMemoria };
+  const chiave = (Deno.env.get("GEMINI_API_KEY") ?? "").trim();
+  if (!chiave) return { ok: false };
+  const res = await fetch(URL_TTS, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-goog-api-key": chiave },
+    body: JSON.stringify(corpoTts()),
+  });
+  if (!res.ok) {
+    console.error("voce_attesa", res.status, (await res.text()).slice(0, 300));
+    return { ok: false };
+  }
+  const pcm = pcmDaTts(await res.json());
+  if (!pcm) { console.error("voce_attesa", "risposta senza audio"); return { ok: false }; }
+  attesaInMemoria = pcm;
+  return { ok: true, ...pcm };
+}
+
 async function siri(testoRaw: unknown) {
   const testo = String(testoRaw ?? "").trim().slice(0, 2000);
   if (!testo) return json({ risposta: "Non ho sentito, riprova.", continua: false });
@@ -3463,6 +3484,8 @@ Deno.serve(async (req) => {
         return json(await pannelloDati());
       case "voce_token":
         return json(await voceToken());
+      case "voce_attesa":
+        return json(await voceAttesa());
       case "panoramica": {
         const [b, d, p, prom] = await Promise.all([bacheca(30), diario(20), pagine(), promemoriaElenco().catch(() => [])]);
         return json({ bacheca: b, diario: d, pagine: p, promemoria: prom });

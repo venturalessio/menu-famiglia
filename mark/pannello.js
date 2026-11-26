@@ -192,6 +192,7 @@ async function avviaLive() {
   $("#risposta").textContent = "";
   voceLive = creaVoceGemini({
     token: tokenVoce,
+    attesa: async () => { const r = await api({ action: "voce_attesa" }); return r.ok ? { audio: r.audio, rate: r.rate } : null; },
     chiediAMark,
     suStato: (s, t) => stato(s, t ?? (s === "ascolto" ? "Ti ascolto · tocca per chiudere" : undefined)),
     suIo: (t) => { $("#io").textContent = t; },
