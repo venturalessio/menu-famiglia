@@ -6,6 +6,8 @@ const WS = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelangu
 const IN_RATE = 16000;   // audio verso Gemini: PCM 16 bit, 16 kHz
 const OUT_RATE = 24000;  // audio da Gemini: PCM 16 bit, 24 kHz
 const SILENZIO_MS = 45_000; // dopo 45 s senza parlare la sessione si chiude (si paga anche il silenzio)
+const RITARDO_ATTESA_MS = 2500; // la frase di attesa parte solo se Mark non ha risposto entro 2,5 s
+const FRASI_ATTESA_N = 4;      // quante frasi di attesa diverse (FRASI_ATTESA in supabase/functions/mark/voce.ts)
 
 // ---------- funzioni pure ----------
 
@@ -147,10 +149,13 @@ export function creaVoceGemini(o) {
     manda({ realtimeInput: { audio: { data: bytesABase64(new Uint8Array(pcm.buffer)), mimeType: `audio/pcm;rate=${IN_RATE}` } } });
   }
 
-  // Frase di attesa con la voce di Gemini, suonata qui: si sente sempre, anche se Gemini resta zitto
-  let attesa = null;
+  // Frase di attesa con la voce di Gemini, suonata qui solo se Mark tarda, a rotazione
+  let attese = [], giro = 0, timerAttesa = null;
   function diciAttesa() {
-    if (!attesa || !ctxOut) return;
+    timerAttesa = null;
+    const pronte = attese.filter(Boolean);
+    if (!pronte.length || !ctxOut || chiusa) return;
+    const attesa = pronte[giro++ % pronte.length];
     const f = pcm16AFloat(new Int16Array(base64ABytes(attesa.audio).buffer));
     const buf = ctxOut.createBuffer(1, f.length, attesa.rate || OUT_RATE);
     buf.copyToChannel(f, 0);
@@ -163,7 +168,7 @@ export function creaVoceGemini(o) {
 
   async function strumento(c) {
     chiestoInQuestoTurno = true;
-    if (!inAttesaMark) diciAttesa();
+    if (!inAttesaMark && !timerAttesa) timerAttesa = setTimeout(diciAttesa, RITARDO_ATTESA_MS);
     inAttesaMark++;
     o.suStato("penso", "Chiedo a Mark…");
     const richiesta = String(c.args?.richiesta ?? "").trim();
@@ -175,6 +180,7 @@ export function creaVoceGemini(o) {
       manda(rispostaStrumento(c, null, e.message || "errore"));
     } finally {
       inAttesaMark--;
+      if (!inAttesaMark && timerAttesa) { clearTimeout(timerAttesa); timerAttesa = null; }
     }
   }
 
@@ -264,7 +270,7 @@ export function creaVoceGemini(o) {
     URL.revokeObjectURL(url);
     o.suStato("penso", "Chiedo il permesso a Mark…");
     // la frase di attesa arriva in parallelo; se non arriva, pazienza
-    o.attesa?.().then((a) => { attesa = a; }).catch(() => {});
+    if (!attese.length) for (let n = 0; n < FRASI_ATTESA_N; n++) o.attesa?.(n).then((a) => { attese[n] = a; }).catch(() => {});
     tokenAttuale = await conLimite(o.token(), 12_000, "Mark non ha risposto per la voce Gemini");
     o.suStato("penso", "Mi collego a Google…");
     await apri(tokenAttuale);

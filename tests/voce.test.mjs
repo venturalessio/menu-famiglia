@@ -88,3 +88,16 @@ test("frase di attesa: Gemini sta zitto, la dice il pannello con la voce Orus", 
   assert.deepEqual([...Buffer.from(r.audio, "base64")], [...pcm]);
   assert.equal(pcmDaTts({}), null);
 });
+
+test("frasi di attesa: quattro, a rotazione, numero fuori misura gestito", async () => {
+  const { FRASI_ATTESA, fraseAttesa, corpoTts } = await import("../supabase/functions/mark/voce.ts");
+  assert.equal(FRASI_ATTESA.length, 4);
+  assert.ok(!FRASI_ATTESA.some((f) => /chiedo a Mark/i.test(f)));
+  assert.equal(fraseAttesa(1), FRASI_ATTESA[1]);
+  assert.equal(fraseAttesa(5), FRASI_ATTESA[1]);
+  assert.equal(fraseAttesa(undefined), FRASI_ATTESA[0]);
+  assert.equal(fraseAttesa("x"), FRASI_ATTESA[0]);
+  assert.equal(corpoTts(fraseAttesa(2)).contents[0].parts[0].text, FRASI_ATTESA[2]);
+  const js = await import("node:fs").then((fs) => fs.readFileSync(new URL("../mark/voce-gemini.js", import.meta.url), "utf8"));
+  assert.match(js, /FRASI_ATTESA_N = 4\b/);
+});
