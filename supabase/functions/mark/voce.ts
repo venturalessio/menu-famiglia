@@ -89,7 +89,8 @@ export const URL_TTS = `https://generativelanguage.googleapis.com/v1beta/models/
 
 export function corpoTts(testo = FRASE_ATTESA, voce = VOCE_PREDEFINITA) {
   return {
-    contents: [{ parts: [{ text: `Dillo in italiano, con tono calmo e cortese: ${testo}` }] }],
+    // Solo la frase: il modello TTS legge ad alta voce tutto il testo, istruzioni comprese
+    contents: [{ parts: [{ text: testo }] }],
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voce } } },

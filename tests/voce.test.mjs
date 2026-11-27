@@ -72,7 +72,7 @@ test("frase di attesa: Gemini sta zitto, la dice il pannello con la voce Orus", 
   const { istruzioniVoce, corpoTts, pcmDaTts, FRASE_ATTESA } = await import("../supabase/functions/mark/voce.ts");
   assert.match(istruzioniVoce("x"), /stai zitto/);
   assert.equal(corpoTts().generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, "Orus");
-  assert.match(corpoTts().contents[0].parts[0].text, new RegExp(FRASE_ATTESA));
+  assert.equal(corpoTts().contents[0].parts[0].text, FRASE_ATTESA); // niente istruzioni: verrebbero lette ad alta voce
   // PCM grezzo
   const raw = Buffer.from([1, 0, 2, 0]).toString("base64");
   assert.deepEqual(pcmDaTts({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "audio/L16;codec=pcm;rate=24000", data: raw } }] } }] }), { audio: raw, rate: 24000 });
