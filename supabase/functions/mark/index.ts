@@ -12,7 +12,7 @@ import { budgetFinito, daControllare, segnaliTruffa } from "./avvisi.ts";
 import { leggiIcs, trovaSpostamento, type EventoFilo } from "./eventi.ts";
 import { MAX_FOTO, coordinateDaRicerca, didascaliaHtml, didascaliaLocale, linkMappa, paginaElenco, immagineDaHtml, nomeZona, posizioneValida, testoPosizione, urlPubblico, type Posizione } from "./posti.ts";
 import { agendaPannello, casaPannello } from "./pannello.ts";
-import { URL_TOKEN, URL_TTS, corpoToken, corpoTts, erroreToken, oggiRoma, pcmDaTts } from "./voce.ts";
+import { URL_TOKEN, URL_TTS, corpoToken, corpoTts, erroreToken, fraseAttesa, oggiRoma, pcmDaTts } from "./voce.ts";
 
 // Gmail a volte chiude la connessione IMAP senza il saluto finale di TLS. L'errore arriva dopo,
 // fuori da ogni try, e senza questi ascoltatori fa cadere la funzione (errore 503 su Telegram).
@@ -2816,15 +2816,17 @@ async function voceToken() {
 }
 
 // Frase di attesa con la voce Orus: generata una volta e tenuta in memoria finché la funzione resta accesa
-let attesaInMemoria: { audio: string; rate: number } | null = null;
-async function voceAttesa() {
-  if (attesaInMemoria) return { ok: true, ...attesaInMemoria };
+const attesaInMemoria = new Map<string, { audio: string; rate: number }>();
+async function voceAttesa(n: unknown) {
+  const frase = fraseAttesa(n);
+  const giaFatta = attesaInMemoria.get(frase);
+  if (giaFatta) return { ok: true, ...giaFatta };
   const chiave = (Deno.env.get("GEMINI_API_KEY") ?? "").trim();
   if (!chiave) return { ok: false };
   const res = await fetch(URL_TTS, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": chiave },
-    body: JSON.stringify(corpoTts()),
+    body: JSON.stringify(corpoTts(frase)),
   });
   if (!res.ok) {
     console.error("voce_attesa", res.status, (await res.text()).slice(0, 300));
@@ -2832,7 +2834,7 @@ async function voceAttesa() {
   }
   const pcm = pcmDaTts(await res.json());
   if (!pcm) { console.error("voce_attesa", "risposta senza audio"); return { ok: false }; }
-  attesaInMemoria = pcm;
+  attesaInMemoria.set(frase, pcm);
   return { ok: true, ...pcm };
 }
 
@@ -3485,7 +3487,7 @@ Deno.serve(async (req) => {
       case "voce_token":
         return json(await voceToken());
       case "voce_attesa":
-        return json(await voceAttesa());
+        return json(await voceAttesa(body.n));
       case "panoramica": {
         const [b, d, p, prom] = await Promise.all([bacheca(30), diario(20), pagine(), promemoriaElenco().catch(() => [])]);
         return json({ bacheca: b, diario: d, pagine: p, promemoria: prom });

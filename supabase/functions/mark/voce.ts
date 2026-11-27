@@ -15,7 +15,7 @@ export function istruzioniVoce(oggi: string): string {
     "REGOLA PIÙ IMPORTANTE. Tu sei solo la voce: non hai accesso a niente della vita di Alessio e non puoi fare azioni.",
     "Per qualsiasi cosa che riguarda Alessio, la sua famiglia, la sua agenda, i promemoria, la casa (luci, prese, tapparelle, riscaldamento, Alexa), la posta, il lavoro, Filo, Notion, gli agenti, i prezzi da comprare, o qualsiasi azione da fare, chiami SEMPRE lo strumento chiedi_a_mark.",
     "Nella richiesta a Mark scrivi la frase di Alessio completa, con tutti i dettagli che ha detto: numeri di telefono, orari, date, nomi, importi. Non riassumere e non togliere niente.",
-    "Mentre aspetti Mark stai zitto: la frase di attesa la dice già il pannello. Non anticipare la risposta.",
+    "Mentre aspetti Mark stai zitto: se serve, la frase di attesa la dice già il pannello. Non anticipare la risposta.",
     "Non dire MAI «fatto», «impostato», «acceso», «spento», «segnato», «inviato» o simili se non è Mark ad averlo detto nella sua risposta. Se Mark non ha confermato, l'azione non è stata fatta.",
     "Quando arriva la risposta di Mark, riferiscila fedelmente: puoi accorciarla, ma numeri, orari e nomi restano identici. Se Mark dice che non è riuscito, lo dici.",
     "Se Mark fa una domanda o chiede una conferma, la fai ad Alessio e poi passi a Mark la sua risposta con chiedi_a_mark, parola per parola.",
@@ -81,9 +81,11 @@ export function erroreToken(status: number): string {
   return `Gemini non risponde (errore ${status}).`;
 }
 
-// Frase di attesa detta con la stessa voce, generata una volta da Gemini TTS e suonata dal pannello
-// appena parte la richiesta a Mark (così si sente sempre, anche se Gemini resta zitto).
-export const FRASE_ATTESA = "Un attimo, chiedo a Mark.";
+// Frasi di attesa dette con la stessa voce, generate una volta da Gemini TTS e suonate dal pannello
+// solo se Mark tarda (vedi RITARDO_ATTESA_MS in mark/voce-gemini.js), a rotazione per non ripetersi.
+export const FRASI_ATTESA = ["Verifico subito.", "Un istante, controllo.", "Ci guardo subito.", "Dammi un secondo."];
+export const FRASE_ATTESA = FRASI_ATTESA[0];
+export const fraseAttesa = (n: unknown) => FRASI_ATTESA[Math.abs(Math.trunc(Number(n))) % FRASI_ATTESA.length] ?? FRASE_ATTESA;
 export const MODELLO_TTS = "gemini-3.8-flash-tts";
 export const URL_TTS = `https://generativelanguage.googleapis.com/v1beta/models/${MODELLO_TTS}:generateContent`;
 
